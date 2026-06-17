@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from odds.match_loader import MatchOdds
@@ -23,6 +24,15 @@ class OddsPapiBundle:
     props_note: str = ""
     first_card_probs: dict[str, float] | None = None
     first_card_note: str = ""
+    sofascore_event_id: int | None = None
+
+
+def _sofascore_id_from_fixture(fixture: dict) -> int | None:
+    try:
+        raw = (fixture.get("externalProviders") or {}).get("sofascoreId")
+        return int(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
 
 
 def fetch_oddspapi_bundle(
@@ -39,8 +49,15 @@ def fetch_oddspapi_bundle(
     if not oddspapi_configured():
         return bundle
 
-    catalog = fetch_markets_catalog()
-    fixture = lookup_oddspapi_fixture(home_query, away_query, kickoff_iso)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f_catalog = pool.submit(fetch_markets_catalog)
+        f_fixture = pool.submit(
+            lookup_oddspapi_fixture, home_query, away_query, kickoff_iso
+        )
+        catalog = f_catalog.result()
+        fixture = f_fixture.result()
+
+    bundle.sofascore_event_id = _sofascore_id_from_fixture(fixture)
     payload = fetch_odds(str(fixture["fixtureId"]))
 
     if need_match_cs:

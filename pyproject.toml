@@ -11,7 +11,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "curl_cffi>=0.7"]
 scrape = ["curl_cffi>=0.7"]
-web = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "python-multipart>=0.0.12", "pillow>=10.0", "pytesseract>=0.3.10"]
+web = ["fastapi>=0.115", "uvicorn[standard]>=0.32", "python-multipart>=0.0.12", "pillow>=10.0", "pytesseract>=0.3.10", "curl_cffi>=0.7"]
 
 [project.scripts]
 fantamondiale-serve = "cli.serve:main"

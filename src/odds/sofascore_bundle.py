@@ -48,30 +48,45 @@ def _fetch_event_teams(event_id: int) -> tuple[int, int] | None:
     return None
 
 
-def fetch_sofascore_bundle(
-    home_query: str,
-    away_query: str,
-    kickoff_iso: str | None = None,
-    *,
-    need_match_cs: bool = True,
-    need_props: bool = True,
-    need_first_card: bool = True,
-) -> SofaScoreBundle:
-    """One event id + odds payload for all SofaScore scrape paths."""
-    bundle = SofaScoreBundle()
-    event_id = _sofascore_event_id(home_query, away_query, kickoff_iso)
-    if event_id is None:
-        bundle.props_note = "SofaScore: evento non trovato"
-        return bundle
-
-    bundle.event_id = event_id
+def _fetch_odds_markets(event_id: int) -> list:
     odds_url = f"https://api.sofascore.com/api/v1/event/{event_id}/odds/1/all"
     odds_result = fetch_json(
         odds_url,
         cache_name=f"sofascore_odds_{event_id}.json",
         extra_headers=_sofascore_headers(),
     )
-    markets = odds_result.data.get("markets") or []
+    return odds_result.data.get("markets") or []
+
+
+def fetch_sofascore_bundle(
+    home_query: str,
+    away_query: str,
+    kickoff_iso: str | None = None,
+    *,
+    event_id: int | None = None,
+    need_match_cs: bool = True,
+    need_props: bool = True,
+    need_first_card: bool = True,
+) -> SofaScoreBundle:
+    """One event id + odds payload for all SofaScore scrape paths."""
+    bundle = SofaScoreBundle()
+    resolved_id = event_id or _sofascore_event_id(home_query, away_query, kickoff_iso)
+    if resolved_id is None:
+        bundle.props_note = "SofaScore: evento non trovato"
+        return bundle
+
+    bundle.event_id = resolved_id
+    markets: list = []
+    teams: tuple[int, int] | None = None
+
+    if need_props:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_odds = pool.submit(_fetch_odds_markets, resolved_id)
+            f_teams = pool.submit(_fetch_event_teams, resolved_id)
+            markets = f_odds.result()
+            teams = f_teams.result()
+    else:
+        markets = _fetch_odds_markets(resolved_id)
 
     if need_match_cs and markets:
         ft = _extract_ft_markets(markets)
@@ -85,7 +100,6 @@ def fetch_sofascore_bundle(
         card_probs = extract_card_probs_from_sofa_markets(markets) if markets else {}
         stats: dict = {}
         try:
-            teams = _fetch_event_teams(event_id)
             if teams:
                 home_id, away_id = teams
                 with ThreadPoolExecutor(max_workers=2) as pool:

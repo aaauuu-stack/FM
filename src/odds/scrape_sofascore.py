@@ -50,16 +50,25 @@ def _load_scheduled_events(day: str) -> list[dict[str, Any]]:
     ]
     events: list[dict[str, Any]] = []
     seen: set[int] = set()
-    for url in urls:
+
+    def _load_one(url: str) -> list[dict[str, Any]]:
         try:
             result = fetch_json(
                 url,
                 cache_name=f"sofascore_events_{day}_{url.split('/')[-1]}.json",
                 extra_headers=_sofascore_headers(),
             )
+            return result.data.get("events", [])
         except RuntimeError:
-            continue
-        for event in result.data.get("events", []):
+            return []
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        batches = pool.map(_load_one, urls)
+
+    for batch in batches:
+        for event in batch:
             event_id = int(event.get("id", 0))
             if event_id and event_id not in seen:
                 seen.add(event_id)

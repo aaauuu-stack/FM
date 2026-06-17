@@ -14,7 +14,6 @@ from odds.merge_providers import merge_match_data, merge_match_data_fill_gaps
 from odds.oddspapi_bundle import OddsPapiBundle, fetch_oddspapi_bundle
 from odds.oddspapi_client import oddspapi_configured
 from odds.sofascore_bundle import SofaScoreBundle, fetch_sofascore_bundle
-from odds.scrape_sofascore_subs import TeamSubProfile, fetch_team_sub_profile
 from players.models import MatchRoster
 
 
@@ -45,7 +44,6 @@ def _merge_first_card(
 class MatchPrefetch:
     """Results from parallel network fetches for a single fixture."""
 
-    sub_profiles: dict[str, TeamSubProfile] = field(default_factory=dict)
     oddspapi_props: tuple[dict[str, float], dict[str, float], str] | None = None
     sofa_props: tuple | None = None
     goalscorer_probs: dict[str, float] | None = None
@@ -63,7 +61,9 @@ def build_match_parallel(
     use_scrape: bool,
 ) -> tuple:
     """
-    Fetch The Odds API once, then enrich match + prefetch player/K/L data in parallel.
+    Fetch The Odds API once, then enrich match + prefetch player/L data in parallel.
+
+    Storico sostituzioni (K) skipped for now — uses role/context fallback.
 
     Returns (match, source_note, requests_remaining, event_id, prefetch).
     """
@@ -78,11 +78,21 @@ def build_match_parallel(
     oddspapi_bundle: OddsPapiBundle | None = None
     sofa_bundle: SofaScoreBundle | None = None
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futures: dict[str, object] = {}
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_event_odds = (
+            pool.submit(
+                fetch_combined_event_player_odds,
+                event_id,
+                sport=sport,
+                region=region,
+                force_refresh=refresh,
+            )
+            if event_id
+            else None
+        )
 
-        if use_oddspapi and oddspapi_configured():
-            futures["oddspapi"] = pool.submit(
+        f_oddspapi = (
+            pool.submit(
                 fetch_oddspapi_bundle,
                 roster.home,
                 roster.away,
@@ -91,65 +101,57 @@ def build_match_parallel(
                 need_props=True,
                 need_first_card=True,
             )
+            if use_oddspapi and oddspapi_configured()
+            else None
+        )
 
-        if use_scrape:
-            futures["sofa"] = pool.submit(
+        if f_oddspapi is not None:
+            try:
+                oddspapi_bundle = f_oddspapi.result()
+            except (RuntimeError, ValueError) as exc:
+                print(f"  [warn] OddsPapi non disponibile: {exc}", file=sys.stderr)
+
+        sofa_event_id = (
+            oddspapi_bundle.sofascore_event_id if oddspapi_bundle else None
+        )
+        f_sofa = (
+            pool.submit(
                 fetch_sofascore_bundle,
                 roster.home,
                 roster.away,
                 kickoff,
+                event_id=sofa_event_id,
                 need_match_cs=need_scrape_match,
                 need_props=True,
                 need_first_card=True,
             )
-
-        futures["sub_home"] = pool.submit(
-            fetch_team_sub_profile,
-            roster.home,
-            kickoff,
-            opponent=roster.away,
+            if use_scrape
+            else None
         )
-        futures["sub_away"] = pool.submit(
-            fetch_team_sub_profile,
-            roster.away,
-            kickoff,
-            opponent=roster.home,
-        )
-
-        if event_id:
-            futures["event_odds"] = pool.submit(
-                fetch_combined_event_player_odds,
-                event_id,
-                sport=sport,
-                region=region,
-                force_refresh=refresh,
-            )
 
         sources = ["The Odds API"]
 
-        for key, future in futures.items():
-            if key in {"sub_home", "sub_away", "event_odds"}:
-                continue
-            try:
-                result = future.result()
-            except (RuntimeError, ValueError) as exc:
-                if key == "oddspapi":
-                    print(f"  [warn] OddsPapi non disponibile: {exc}", file=sys.stderr)
-                elif key == "sofa":
-                    print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
-                continue
+        if oddspapi_bundle and oddspapi_bundle.match_odds:
+            match = merge_match_data(match, oddspapi_bundle.match_odds)
+            sources.append("OddsPapi")
+        elif use_oddspapi and not oddspapi_configured():
+            print(
+                "  [warn] OddsPapi non configurato — vedi docs/API_SETUP.md",
+                file=sys.stderr,
+            )
 
-            if key == "oddspapi":
-                oddspapi_bundle = result
-                if oddspapi_bundle.match_odds:
-                    match = merge_match_data(match, oddspapi_bundle.match_odds)
-                    sources.append("OddsPapi")
-            elif key == "sofa":
-                sofa_bundle = result
+        if f_sofa is not None:
+            try:
+                sofa_bundle = f_sofa.result()
                 if need_scrape_match and sofa_bundle.match_odds:
                     match = merge_match_data_fill_gaps(match, sofa_bundle.match_odds)
-                    if sofa_bundle.match_odds.correct_score or sofa_bundle.match_odds.half_time_correct_score:
+                    if (
+                        sofa_bundle.match_odds.correct_score
+                        or sofa_bundle.match_odds.half_time_correct_score
+                    ):
                         sources.append("SofaScore")
+            except (RuntimeError, ValueError) as exc:
+                print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
 
         if oddspapi_bundle and oddspapi_bundle.goal_probs is not None:
             prefetch.oddspapi_props = (
@@ -166,17 +168,12 @@ def build_match_parallel(
                 sofa_bundle.props_note,
             )
 
-        prefetch.sub_profiles = {
-            "home": futures["sub_home"].result(),
-            "away": futures["sub_away"].result(),
-        }
-
         if use_oddspapi or use_scrape:
             prefetch.first_card = _merge_first_card(oddspapi_bundle, sofa_bundle)
 
-        if "event_odds" in futures:
+        if f_event_odds is not None:
             try:
-                gs, props = futures["event_odds"].result()
+                gs, props = f_event_odds.result()
                 prefetch.goalscorer_probs = gs
                 prefetch.event_player_props = props
             except RuntimeError:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from odds.goalscorer import attach_all_player_probs
+from odds.scrape_sofascore_subs import TeamSubProfile
 from players.models import MatchRoster
 from players.roster_loader import load_roster
 from predict.event_ev import recommend_first_card, recommend_first_sub
@@ -90,8 +91,11 @@ def _analyze_with_roster(
     book_probs = first_card[0] if first_card else None
     book_note = first_card[1] if first_card else ""
 
+    # Storico NT sostituzioni (K) disabilitato per ora — fallback ruolo + contesto partita
     sub_rec = recommend_first_sub(
-        roster, match, sub_profiles=prefetch.sub_profiles or None
+        roster,
+        match,
+        sub_profiles={"home": TeamSubProfile(), "away": TeamSubProfile()},
     )
     card_rec = recommend_first_card(
         roster,
