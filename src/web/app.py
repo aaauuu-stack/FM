@@ -7,6 +7,7 @@ import html
 import logging
 import os
 import sys
+import time
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
@@ -164,9 +165,16 @@ def _form_html(
     <label><input type="checkbox" name="no_oddspapi" value="1"{" checked" if no_oddspapi else ""}> Salta OddsPapi</label>
     <label><input type="checkbox" name="no_scrape" value="1"{" checked" if no_scrape else ""}> Salta scraping</label>
   </div>
-  <button type="submit">Analizza partita</button>
+  <button type="submit" id="submit-btn">Analizza partita</button>
 </form>
 <p class="meta" style="margin-top:1rem">Usa cache di default — spunta Refresh solo quando vuoi aggiornare le quote.</p>
+<script>
+document.querySelector('form').addEventListener('submit', function() {
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Analisi in corso (15–40 sec)…';
+});
+</script>
 """
 
 
@@ -183,13 +191,18 @@ def _run_analysis(
     use_oddspapi: bool,
     use_scrape: bool,
 ):
+    started = time.perf_counter()
     roster = roster_from_screenshots(blobs)
-    return analyze_match_from_roster(
+    ocr_sec = time.perf_counter() - started
+    logger.info("OCR completato in %.1fs (%d immagini)", ocr_sec, len(blobs))
+    analysis = analyze_match_from_roster(
         roster,
         refresh=refresh,
         use_oddspapi=use_oddspapi,
         use_scrape=use_scrape,
     )
+    logger.info("Analisi totale in %.1fs", time.perf_counter() - started)
+    return analysis
 
 
 async def _read_uploads(screenshots: list[UploadFile]) -> list[bytes]:
@@ -244,12 +257,26 @@ async def predict(
         )
 
     try:
-        analysis = await asyncio.to_thread(
-            _run_analysis,
-            blobs,
-            refresh=do_refresh,
-            use_oddspapi=use_oddspapi,
-            use_scrape=use_scrape,
+        analysis = await asyncio.wait_for(
+            asyncio.to_thread(
+                _run_analysis,
+                blobs,
+                refresh=do_refresh,
+                use_oddspapi=use_oddspapi,
+                use_scrape=use_scrape,
+            ),
+            timeout=120.0,
+        )
+    except TimeoutError:
+        return HTMLResponse(
+            _page(
+                _form_html(
+                    error="Analisi troppo lenta (>2 min). Riprova con 1–2 screenshot nitidi, senza Refresh.",
+                    refresh=do_refresh,
+                    no_oddspapi=skip_oddspapi_checked,
+                    no_scrape=skip_scrape_checked,
+                )
+            )
         )
     except (ValueError, RuntimeError) as exc:
         return HTMLResponse(

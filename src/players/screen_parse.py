@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import io
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from odds.api_normalize import TEAM_ALIASES, normalize_team
+from odds.fast_mode import is_fast_mode
 from players.models import MatchRoster, PlayerBonus
 from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
+
+HOME_COL_MARKER = "__HOME_COL__"
+AWAY_COL_MARKER = "__AWAY_COL__"
 
 
 def _default_match_id(home: str, away: str) -> str:
@@ -91,7 +96,7 @@ def _prepare_gray_image(data: bytes):
     image = ImageOps.exif_transpose(image)
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
-    max_side = 1600
+    max_side = 1200 if is_fast_mode() else 1600
     width, height = image.size
     if max(width, height) > max_side:
         scale = max_side / max(width, height)
@@ -115,7 +120,7 @@ def _ocr_region(gray, box, *, psm: int = 6) -> str:
 
 
 def ocr_image_bytes(data: bytes) -> str:
-    """Run Tesseract OCR on one FM screenshot (header + body)."""
+    """OCR FM screenshot: header banner + left (home) + right (away) columns."""
     try:
         import pytesseract  # noqa: F401
     except ImportError as exc:
@@ -126,27 +131,37 @@ def ocr_image_bytes(data: bytes) -> str:
     if len(data) > 5 * 1024 * 1024:
         raise ValueError("Screenshot troppo grande (max 5 MB ciascuno)")
 
-    image, gray = _prepare_gray_image(data)
-    width, height = image.size
+    _image, gray = _prepare_gray_image(data)
+    width, height = gray.size
 
-    header_h = int(height * 0.22)
+    header_h = int(height * 0.20)
+    body_top = int(height * 0.12)
+    mid = width // 2
+    gutter = max(8, width // 40)
+
     header_text = _ocr_region(gray, (0, 0, width, header_h), psm=7)
-    body_text = _ocr_region(gray, (0, int(height * 0.10), width, height), psm=6)
+    home_col = _ocr_region(gray, (0, body_top, mid - gutter, height), psm=6)
+    away_col = _ocr_region(gray, (mid + gutter, body_top, width, height), psm=6)
 
-    return f"{header_text.strip()}\n{body_text.strip()}"
+    return (
+        f"{header_text.strip()}\n{HOME_COL_MARKER}\n{home_col.strip()}\n"
+        f"{AWAY_COL_MARKER}\n{away_col.strip()}"
+    )
 
 
 def ocr_images(images: list[bytes]) -> str:
     if len(images) > 6:
         raise ValueError("Massimo 6 screenshot per analisi")
-    parts: list[str] = []
-    for blob in images:
-        if not blob:
-            continue
-        text = ocr_image_bytes(blob).strip()
-        if text:
-            parts.append(text)
-    return "\n\n".join(parts)
+    blobs = [b for b in images if b]
+    if not blobs:
+        return ""
+    workers = min(3, len(blobs))
+    if workers <= 1:
+        parts = [ocr_image_bytes(b).strip() for b in blobs]
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            parts = [t.strip() for t in pool.map(ocr_image_bytes, blobs)]
+    return "\n\n".join(p for p in parts if p)
 
 
 def _detect_role(fragment: str) -> str | None:
@@ -267,9 +282,71 @@ def _parse_player_entries(line: str, role: str) -> list[tuple[str, int, int, boo
     return entries
 
 
+def _add_player(
+    players: list[PlayerBonus],
+    seen: set[tuple[str, str]],
+    *,
+    name: str,
+    side: str,
+    role: str,
+    bonus_goal: int,
+    bonus_cs: int,
+    is_vice: bool,
+) -> None:
+    key = (name.lower(), side)
+    if key in seen:
+        return
+    seen.add(key)
+    players.append(
+        PlayerBonus(
+            name=name,
+            side=side,
+            role=role,
+            bonus_goal=bonus_goal,
+            bonus_clean_sheet=bonus_cs,
+            vice_allenatore=is_vice,
+        )
+    )
+
+
+def _balance_player_sides(players: list[PlayerBonus]) -> list[PlayerBonus]:
+    """If OCR missed away column, split each role group in half (home | away)."""
+    if any(p.side == "away" for p in players):
+        return players
+
+    by_role: dict[str, list[PlayerBonus]] = {}
+    for player in players:
+        by_role.setdefault(player.role, []).append(player)
+
+    for group in by_role.values():
+        if len(group) < 2:
+            continue
+        split = len(group) // 2
+        for idx, player in enumerate(group):
+            if player.vice_allenatore:
+                continue
+            player.side = "home" if idx < split else "away"
+
+    return players
+
+
+def _validate_roster_sides(players: list[PlayerBonus]) -> None:
+    pool = [p for p in players if not p.vice_allenatore]
+    home = sum(1 for p in pool if p.side == "home")
+    away = sum(1 for p in pool if p.side == "away")
+    if home >= 2 and away >= 2:
+        return
+    raise ValueError(
+        f"Giocatori letti: {home} casa, {away} ospite — servono almeno 2 per squadra. "
+        "Carica screen nitidi con entrambe le colonne (Uzbekistan a sinistra, Colombia a destra)."
+    )
+
+
 def extract_players(text: str, home: str, away: str) -> list[PlayerBonus]:
     """Parse FM player rows: two columns (home left, away right) under section headers."""
     current_role = "MID"
+    forced_side: str | None = None
+    section_row = 0
     players: list[PlayerBonus] = []
     seen: set[tuple[str, str]] = set()
 
@@ -278,38 +355,44 @@ def extract_players(text: str, home: str, away: str) -> list[PlayerBonus]:
         if not line:
             continue
 
+        if line == HOME_COL_MARKER:
+            forced_side = "home"
+            section_row = 0
+            continue
+        if line == AWAY_COL_MARKER:
+            forced_side = "away"
+            section_row = 0
+            continue
+
         for pattern, role in SECTION_ROLE:
             if pattern.search(line) and not PLAYER_BONUS_RE.search(line):
                 current_role = role
+                section_row = 0
                 break
         else:
             entries = _parse_player_entries(line, current_role)
             if not entries:
                 continue
 
-            sides: list[str]
             if len(entries) >= 2:
                 sides = ["home", "away"]
-            elif len(entries) == 1:
-                sides = ["home"]
+            elif forced_side:
+                sides = [forced_side]
             else:
-                continue
+                sides = ["home" if section_row % 2 == 0 else "away"]
+                section_row += 1
 
             for entry, side in zip(entries, sides, strict=False):
                 name, bonus_goal, bonus_cs, is_vice = entry
-                key = (name.lower(), side)
-                if key in seen:
-                    continue
-                seen.add(key)
-                players.append(
-                    PlayerBonus(
-                        name=name,
-                        side=side,
-                        role=current_role,
-                        bonus_goal=bonus_goal,
-                        bonus_clean_sheet=bonus_cs,
-                        vice_allenatore=is_vice,
-                    )
+                _add_player(
+                    players,
+                    seen,
+                    name=name,
+                    side=side,
+                    role=current_role,
+                    bonus_goal=bonus_goal,
+                    bonus_cs=bonus_cs,
+                    is_vice=is_vice,
                 )
 
     if len(players) < 4:
@@ -318,6 +401,8 @@ def extract_players(text: str, home: str, away: str) -> list[PlayerBonus]:
             "Carica tutti gli screen bonus con Portieri, Attaccanti, Centrocampisti."
         )
 
+    players = _balance_player_sides(players)
+    _validate_roster_sides(players)
     return players
 
 

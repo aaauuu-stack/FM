@@ -74,6 +74,63 @@ def test_roster_from_fm_ocr():
     assert len(roster.players) >= 8
 
 
+def test_extract_players_column_markers():
+    text = """
+UZBEKISTAN - COLOMBIA
+Portieri
+__HOME_COL__
+ERGASHEV +14
+NEMATOV +14
+YUSUPOV +14
+__AWAY_COL__
+MONTERO +5
+OSPINA +5
+VARGAS C. +5
+Attaccanti
+__HOME_COL__
+SHOMURODOV +10
+__AWAY_COL__
+SUAREZ L. +5 ✓
+Centrocampisti
+__HOME_COL__
+ABDULLAEV +13
+ESANOV +13
+__AWAY_COL__
+ARIAS J. +6
+CAMPAZ +9
+"""
+    home, away = extract_match_teams(text)
+    players = extract_players(text, home, away)
+    assert sum(1 for p in players if p.side == "home") >= 2
+    assert sum(1 for p in players if p.side == "away") >= 2
+    assert any(p.vice_allenatore and "suarez" in p.name.lower() for p in players)
+
+
+def test_balance_when_all_home():
+    text = """
+UZBEKISTAN - COLOMBIA
+Portieri
+ERGASHEV +14
+NEMATOV +14
+MONTERO +5
+OSPINA +5
+Attaccanti
+AMANOV +12
+CORDOBA JH. +10
+KHAMDAMOV +13
+DIAZ L. +4
+Centrocampisti
+ABDULLAEV +13
+ARIAS J. +6
+ESANOV +13
+CAMPAZ +9
+"""
+    home, away = extract_match_teams(text)
+    players = extract_players(text, home, away)
+    assert sum(1 for p in players if p.side == "home") >= 2
+    assert sum(1 for p in players if p.side == "away") >= 2
+
+
 def test_extract_match_inghilterra_croazia():
     home, away = extract_match_teams(ENG_CRO_SAMPLE)
     assert home == "Inghilterra"
