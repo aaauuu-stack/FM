@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from odds.api_client import _project_root, load_env_file
+from odds.fast_mode import http_timeout
+from odds.memory_cache import mem_get, mem_set
 
 BASE_URL = "https://api.oddspapi.io/v4"
 SOCCER_SPORT_ID = 10
@@ -51,10 +53,15 @@ def _cache_dir() -> Path:
 
 def _get_json(path: str, params: dict[str, Any], cache_name: str, ttl: int) -> OddsPapiFetchResult:
     cache_file = _cache_dir() / cache_name
-    if cache_file.exists():
+    mem_key = str(cache_file.resolve())
+    cached = mem_get(mem_key, ttl)
+    if cached is None and cache_file.exists():
         payload = json.loads(cache_file.read_text(encoding="utf-8"))
         if time.time() - float(payload.get("fetched_at", 0)) <= ttl:
-            return OddsPapiFetchResult(data=payload["data"], from_cache=True)
+            cached = payload["data"]
+            mem_set(mem_key, cached)
+    if cached is not None:
+        return OddsPapiFetchResult(data=cached, from_cache=True)
 
     params = {**params, "apiKey": get_oddspapi_key()}
     query = urllib.parse.urlencode(params)
@@ -69,7 +76,7 @@ def _get_json(path: str, params: dict[str, Any], cache_name: str, ttl: int) -> O
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with urllib.request.urlopen(request, timeout=http_timeout(20)) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -81,6 +88,7 @@ def _get_json(path: str, params: dict[str, Any], cache_name: str, ttl: int) -> O
         json.dumps({"fetched_at": time.time(), "data": data}, indent=2),
         encoding="utf-8",
     )
+    mem_set(mem_key, data)
     return OddsPapiFetchResult(data=data, from_cache=False)
 
 

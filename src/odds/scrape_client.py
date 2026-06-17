@@ -56,7 +56,7 @@ def _write_cache(cache_file: Path, data: Any) -> None:
 
 def _fetch_live(url: str, headers: dict[str, str]) -> bytes:
     """GET with curl_cffi when installed, else urllib."""
-    timeout = http_timeout(45.0)
+    timeout = http_timeout(25.0)
     try:
         from curl_cffi import requests as cffi_requests
 

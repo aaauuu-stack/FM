@@ -19,5 +19,5 @@ def http_timeout(default: float) -> float:
     if is_fast_mode():
         return min(default, 10.0)
     if is_cloud_host():
-        return min(default, 15.0)
+        return min(default, 12.0)
     return default

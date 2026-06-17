@@ -14,6 +14,7 @@ from odds.oddspapi_client import (
     fetch_markets_catalog,
     fetch_odds,
 )
+from odds.request_cache import cached_call
 from odds.score_parsing import parse_score_outcome, score_key
 
 
@@ -112,18 +113,23 @@ def lookup_oddspapi_fixture(
     kickoff_iso: str | None = None,
 ) -> dict[str, Any]:
     """Find OddsPapi fixture metadata for a match."""
-    if kickoff_iso:
-        try:
-            kickoff = datetime.fromisoformat(kickoff_iso.replace("Z", "+00:00"))
-        except ValueError:
-            kickoff = datetime.now(timezone.utc)
-    else:
-        kickoff = datetime.now(timezone.utc)
+    key = f"oddspapi_fixture:{home_query}:{away_query}:{kickoff_iso or ''}"
 
-    from_iso = (kickoff - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    to_iso = (kickoff + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    fixtures = fetch_fixtures(from_iso, to_iso)
-    return _find_fixture(fixtures, home_query, away_query)
+    def _lookup() -> dict[str, Any]:
+        if kickoff_iso:
+            try:
+                kickoff = datetime.fromisoformat(kickoff_iso.replace("Z", "+00:00"))
+            except ValueError:
+                kickoff = datetime.now(timezone.utc)
+        else:
+            kickoff = datetime.now(timezone.utc)
+
+        from_iso = (kickoff - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        to_iso = (kickoff + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        fixtures = fetch_fixtures(from_iso, to_iso)
+        return _find_fixture(fixtures, home_query, away_query)
+
+    return cached_call(key, _lookup)
 
 
 def fetch_oddspapi_match_odds(

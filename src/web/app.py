@@ -14,8 +14,10 @@ from fastapi.responses import HTMLResponse
 
 from odds.api_client import get_api_key, load_env_file, _project_root
 from odds.memory_cache import warm_all_caches
+from odds.request_cache import clear_request_cache
 from players.screen_parse import roster_from_screenshots
 from predict.analyze import analyze_match_from_roster
+from predict.timing import reset_timings, timed, timing_summary
 from web.html_render import render_analysis
 
 logger = logging.getLogger(__name__)
@@ -195,17 +197,29 @@ def _run_analysis(
     use_oddspapi: bool,
     use_scrape: bool,
 ):
+    reset_timings()
+    clear_request_cache()
     started = time.perf_counter()
-    roster = roster_from_screenshots(blobs)
-    ocr_sec = time.perf_counter() - started
-    logger.info("OCR completato in %.1fs (%d immagini)", ocr_sec, len(blobs))
-    analysis = analyze_match_from_roster(
-        roster,
-        refresh=refresh,
-        use_oddspapi=use_oddspapi,
-        use_scrape=use_scrape,
+    with timed("ocr"):
+        roster = roster_from_screenshots(blobs)
+    logger.info(
+        "OCR ok: %s vs %s, %d giocatori",
+        roster.home,
+        roster.away,
+        len(roster.players),
     )
-    logger.info("Analisi totale in %.1fs", time.perf_counter() - started)
+    with timed("quote_e_calcolo"):
+        analysis = analyze_match_from_roster(
+            roster,
+            refresh=refresh,
+            use_oddspapi=use_oddspapi,
+            use_scrape=use_scrape,
+        )
+    logger.info(
+        "Analisi totale %.1fs — %s",
+        time.perf_counter() - started,
+        timing_summary(),
+    )
     return analysis
 
 
@@ -272,10 +286,17 @@ async def predict(
             timeout=300.0,
         )
     except TimeoutError:
+        diag = timing_summary()
         return HTMLResponse(
             _page(
                 _form_html(
-                    error="Analisi troppo lenta (>5 min). Riprova con 1–2 screenshot nitidi, senza Refresh.",
+                    error=(
+                        "Analisi troppo lenta (>5 min). "
+                        f"Timing parziale: {diag}. "
+                        "Se OCR è alto: usa 1 screenshot nitido. "
+                        "Se sofascore/oddspapi è alto: riprova senza Refresh "
+                        "(Render free tier, rete lenta verso SofaScore)."
+                    ),
                     refresh=do_refresh,
                     no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,
