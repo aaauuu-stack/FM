@@ -2,59 +2,79 @@
 
 from players.screen_parse import extract_match_teams, extract_players, roster_from_ocr_text
 
+# Realistic OCR from FM app (Uzbekistan – Colombia screen)
+UZB_COL_FM = """
+SCELTA CALCIATORI
+UZBEKISTAN - COLOMBIA
 
-UZB_COL_SAMPLE = """
-Uzbekistan - Colombia
-Mondiale 2026
+Portieri
+bonus porta inviolata
+ERGASHEV +14  MONTERO +5
+NEMATOV +14   OSPINA +5
+YUSUPOV +14   VARGAS C. +5
 
-Uzbekistan
-Nishanov POR +10 +4
-Khusanov DIF +9 +3
-Shomurodov ATT +5
+Calciatori di movimento
+Attaccanti
+bonus gol fatto
+AMANOV +12    CORDOBA JH. +10
+KHAMDAMOV +13 DIAZ L. +4
+SERGEEV +12   HERNANDEZ C. +8
+SHOMURODOV +10 SUAREZ L. +5 ✓
 
-Colombia
-Ospina POR +10 +5
-James CEN +6 ✓
-Diaz ATT +4
+Centrocampisti
+ABDULLAEV +13 ARIAS J. +6
+ESANOV +13    CAMPAZ +9
 """
 
 ENG_CRO_SAMPLE = """
 Inghilterra vs Croazia
 
-Inghilterra
-Pickford POR +10 +4
-Kane ATT +3
+Portieri
+Pickford +10 +4
+Livakovic +10 +5
 
-Croazia
-Modric CEN +6
-Sucic CEN +12 vice
+Attaccanti
+Kane +3
+Kramaric +5
+
+Centrocampisti
+Modric +6
+Sucic +12 vice
 """
 
 
-def test_extract_match_uzbekistan_colombia():
-    home, away = extract_match_teams(UZB_COL_SAMPLE)
+def test_extract_match_uzbekistan_colombia_banner():
+    home, away = extract_match_teams(UZB_COL_FM)
     assert home == "Uzbekistan"
     assert away == "Colombia"
+
+
+def test_extract_match_uppercase_banner():
+    home, away = extract_match_teams("SCELTA\nUZBEKISTAN – COLOMBIA\nPortieri")
+    assert home == "Uzbekistan"
+    assert away == "Colombia"
+
+
+def test_extract_players_fm_layout():
+    home, away = extract_match_teams(UZB_COL_FM)
+    players = extract_players(UZB_COL_FM, home, away)
+    names = {(p.name, p.side, p.role) for p in players}
+    assert ("Ergashev", "home", "GK") in names or ("ERGASHEV", "home", "GK") in names
+    assert ("Montero", "away", "GK") in names or ("MONTERO", "away", "GK") in names
+    assert ("Shomurodov", "home", "FWD") in names or ("SHOMURODOV", "home", "FWD") in names
+    vice = [p for p in players if p.vice_allenatore]
+    assert len(vice) == 1
+    assert "suarez" in vice[0].name.lower()
+
+
+def test_roster_from_fm_ocr():
+    roster = roster_from_ocr_text(UZB_COL_FM)
+    assert roster.home == "Uzbekistan"
+    assert roster.away == "Colombia"
+    assert len(roster.players) >= 8
 
 
 def test_extract_match_inghilterra_croazia():
     home, away = extract_match_teams(ENG_CRO_SAMPLE)
     assert home == "Inghilterra"
     assert away == "Croazia"
-
-
-def test_extract_players_and_vice():
-    home, away = extract_match_teams(ENG_CRO_SAMPLE)
-    players = extract_players(ENG_CRO_SAMPLE, home, away)
-    names = {p.name for p in players}
-    assert "Kane" in names
-    vice = [p for p in players if p.vice_allenatore]
-    assert len(vice) == 1
-    assert vice[0].name == "Sucic"
-
-
-def test_roster_from_ocr_text():
-    roster = roster_from_ocr_text(UZB_COL_SAMPLE)
-    assert roster.home == "Uzbekistan"
-    assert roster.away == "Colombia"
-    assert len(roster.players) >= 4

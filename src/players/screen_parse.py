@@ -14,6 +14,7 @@ from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
 def _default_match_id(home: str, away: str) -> str:
     return f"{home[:3].upper()}-{away[:3].upper()}"
 
+
 ROLE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(?:POR|PORT(?:IERE)?|GK)\b", re.I), "GK"),
     (re.compile(r"\b(?:DIF|DIFENS(?:ORE)?|DEF)\b", re.I), "DEF"),
@@ -21,14 +22,35 @@ ROLE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(?:ATT|ATTACC(?:ANTE)?|FWD|A\/C)\b", re.I), "FWD"),
 ]
 
-VICE_PATTERN = re.compile(r"[✓✔☑]|vice", re.I)
+# FM app section headers (Italian)
+SECTION_ROLE: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"portier", re.I), "GK"),
+    (re.compile(r"difensor", re.I), "DEF"),
+    (re.compile(r"centrocamp", re.I), "MID"),
+    (re.compile(r"attacc", re.I), "FWD"),
+]
+
+VICE_PATTERN = re.compile(r"[✓✔☑●◉◎]|vice", re.I)
 BONUS_PATTERN = re.compile(r"\+(\d{1,2})")
-MATCH_LINE = re.compile(
-    r"^\s*(?P<home>.+?)\s*(?:[-–—]|vs\.?|×|x)\s*(?P<away>.+?)\s*$",
+# NOME +bonus (FM app: ERGASHEV +14, SUAREZ L. +5)
+PLAYER_BONUS_RE = re.compile(
+    r"([A-ZÀ-ÖØ-öø-ÿ][A-ZÀ-ÖØ-öø-ÿ\s.'·-]{0,26}?)\s+\+(\d{1,2})",
+    re.I,
+)
+MATCH_IN_TEXT = re.compile(
+    r"(?P<home>[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s.'-]{2,30}?)"
+    r"\s*(?:[-–—|·]|vs\.?)\s*"
+    r"(?P<away>[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s.'-]{2,30})",
     re.I,
 )
 
-# Italian display names for WC teams (extend as needed)
+SKIP_LINE = re.compile(
+    r"^(scegli|scelta|calciatori|bonus|porta|gol|movimento|calciatori di|"
+    r"portieri|attaccanti|centrocampisti|difensori|\(\+\)|\d{1,2}:\d{2}|"
+    r"lun|mar|mer|gio|ven|sab|dom).*$",
+    re.I,
+)
+
 TEAM_DISPLAY: dict[str, str] = {
     "england": "Inghilterra",
     "croatia": "Croazia",
@@ -53,7 +75,6 @@ TEAM_DISPLAY: dict[str, str] = {
 
 
 def _known_team_tokens() -> list[tuple[str, str]]:
-    """Return (normalized_key, display_name) sorted longest first."""
     seen: dict[str, str] = {}
     for it_key, en_val in TEAM_ALIASES.items():
         seen[normalize_team(it_key)] = it_key.title() if it_key.islower() else it_key
@@ -63,11 +84,40 @@ def _known_team_tokens() -> list[tuple[str, str]]:
     return sorted(seen.items(), key=lambda x: len(x[0]), reverse=True)
 
 
-def ocr_image_bytes(data: bytes) -> str:
-    """Run Tesseract OCR on one screenshot."""
+def _prepare_gray_image(data: bytes):
+    from PIL import Image, ImageOps
+
+    image = Image.open(io.BytesIO(data))
+    image = ImageOps.exif_transpose(image)
+    if image.mode not in ("RGB", "L"):
+        image = image.convert("RGB")
+    max_side = 1600
+    width, height = image.size
+    if max(width, height) > max_side:
+        scale = max_side / max(width, height)
+        image = image.resize(
+            (max(1, int(width * scale)), max(1, int(height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+    return image, image.convert("L")
+
+
+def _ocr_region(gray, box, *, psm: int = 6) -> str:
+    import pytesseract
+
+    crop = gray.crop(box)
+    crop = crop.point(lambda p: 255 if p > 140 else 0) if box[1] < gray.size[1] * 0.25 else crop
+    config = f"--psm {psm}"
     try:
-        import pytesseract
-        from PIL import Image, ImageOps
+        return pytesseract.image_to_string(crop, lang="ita+eng", config=config)
+    except pytesseract.TesseractError:
+        return pytesseract.image_to_string(crop, lang="eng", config=config)
+
+
+def ocr_image_bytes(data: bytes) -> str:
+    """Run Tesseract OCR on one FM screenshot (header + body)."""
+    try:
+        import pytesseract  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
             "OCR non disponibile: installa Pillow e pytesseract (e Tesseract sul server)"
@@ -76,25 +126,14 @@ def ocr_image_bytes(data: bytes) -> str:
     if len(data) > 5 * 1024 * 1024:
         raise ValueError("Screenshot troppo grande (max 5 MB ciascuno)")
 
-    image = Image.open(io.BytesIO(data))
-    image = ImageOps.exif_transpose(image)
-    if image.mode not in ("RGB", "L"):
-        image = image.convert("RGB")
-
-    max_side = 1400
+    image, gray = _prepare_gray_image(data)
     width, height = image.size
-    if max(width, height) > max_side:
-        scale = max_side / max(width, height)
-        image = image.resize(
-            (max(1, int(width * scale)), max(1, int(height * scale))),
-            Image.Resampling.LANCZOS,
-        )
-    gray = image.convert("L")
 
-    try:
-        return pytesseract.image_to_string(gray, lang="ita+eng")
-    except pytesseract.TesseractError:
-        return pytesseract.image_to_string(gray, lang="eng")
+    header_h = int(height * 0.22)
+    header_text = _ocr_region(gray, (0, 0, width, header_h), psm=7)
+    body_text = _ocr_region(gray, (0, int(height * 0.10), width, height), psm=6)
+
+    return f"{header_text.strip()}\n{body_text.strip()}"
 
 
 def ocr_images(images: list[bytes]) -> str:
@@ -117,90 +156,120 @@ def _detect_role(fragment: str) -> str | None:
     return None
 
 
-def _find_team_in_line(line: str) -> str | None:
-    norm_line = normalize_team(line)
+def _find_team_in_text(fragment: str) -> str | None:
+    lower = fragment.lower()
     for token, display in _known_team_tokens():
-        if token and token in norm_line:
+        if len(token) >= 4 and token in lower:
             return display
+    for it_key, en_val in TEAM_ALIASES.items():
+        if len(it_key) >= 4 and it_key in lower:
+            return TEAM_DISPLAY.get(en_val, it_key.title())
     return None
 
 
+def _find_teams_by_position(text: str) -> list[str]:
+    """All known NT names found in text, ordered by first appearance."""
+    lower = text.lower()
+    hits: list[tuple[int, str]] = []
+    seen: set[str] = set()
+
+    candidates: list[tuple[str, str]] = list(_known_team_tokens())
+    for it_key, en_val in TEAM_ALIASES.items():
+        display = TEAM_DISPLAY.get(en_val, it_key.title())
+        candidates.append((it_key, display))
+
+    for token, display in sorted(candidates, key=lambda x: len(x[0]), reverse=True):
+        if len(token) < 4:
+            continue
+        idx = lower.find(token)
+        if idx < 0:
+            continue
+        norm = normalize_team(display)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        hits.append((idx, display))
+
+    hits.sort(key=lambda item: item[0])
+    return [name for _, name in hits]
+
+
 def extract_match_teams(text: str) -> tuple[str, str]:
-    """Home and away from OCR text (Italian or English names)."""
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    """Home and away from OCR text (FM banner: UZBEKISTAN – COLOMBIA)."""
+    compact = " ".join(text.split())
 
-    for line in lines[:40]:
-        match = MATCH_LINE.match(line)
-        if match:
-            home = _find_team_in_line(match.group("home")) or match.group("home").strip()
-            away = _find_team_in_line(match.group("away")) or match.group("away").strip()
-            if home and away and normalize_team(home) != normalize_team(away):
-                return home, away
+    header = compact[:600]
+    for match in MATCH_IN_TEXT.finditer(header):
+        home = _find_team_in_text(match.group("home")) or match.group("home").strip().title()
+        away_raw = match.group("away")
+        away = _find_team_in_text(away_raw) or away_raw.strip().title()
+        if normalize_team(home) != normalize_team(away):
+            return home, away
 
-    found: list[str] = []
-    seen_norm: set[str] = set()
-    for line in lines[:50]:
-        team = _find_team_in_line(line)
-        if team:
-            norm = normalize_team(team)
-            if norm not in seen_norm:
-                seen_norm.add(norm)
-                found.append(team)
-
+    found = _find_teams_by_position(text)
     if len(found) >= 2:
         return found[0], found[1]
 
     raise ValueError(
         "Non riesco a leggere casa/ospite dagli screenshot. "
-        "Assicurati che compaiano i nomi delle squadre (es. Uzbekistan - Colombia)."
+        "Includi lo screen con il banner partita in alto (es. UZBEKISTAN – COLOMBIA)."
     )
 
 
-def _parse_player_line(line: str) -> dict | None:
-    bonuses = [int(x) for x in BONUS_PATTERN.findall(line)]
-    if not bonuses:
-        return None
-
-    role = _detect_role(line)
-    if not role:
-        return None
-
-    is_vice = bool(VICE_PATTERN.search(line))
-    cleaned = BONUS_PATTERN.sub(" ", line)
-    for pat, _ in ROLE_PATTERNS:
-        cleaned = pat.sub(" ", cleaned)
-    cleaned = VICE_PATTERN.sub(" ", cleaned)
-    cleaned = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ\s'.-]", " ", cleaned)
-    name = re.sub(r"\s+", " ", cleaned).strip(" .-")
+def _clean_player_name(raw: str) -> str:
+    name = re.sub(r"\s+", " ", raw).strip(" .-|·")
+    name = re.sub(r"^[O0○◯]\s*", "", name)
     if len(name) < 2:
-        return None
-
-    bonus_goal = bonuses[0]
-    bonus_cs = bonuses[1] if len(bonuses) > 1 and role in {"GK", "DEF"} else 0
-
-    return {
-        "name": _format_player_name(name),
-        "role": role,
-        "bonus_goal": bonus_goal,
-        "bonus_clean_sheet": bonus_cs,
-        "vice_allenatore": is_vice,
-    }
+        return ""
+    parts = name.split()
+    if len(parts) >= 2 and len(parts[-1]) <= 2 and parts[-1].replace(".", "").isalpha():
+        pass  # keep suffix e.g. "L." in Suarez L.
+    return name.upper() if name.isupper() else _format_player_name(name)
 
 
 def _format_player_name(raw: str) -> str:
     parts = raw.split()
     if not parts:
         return raw
-    if len(parts) >= 2 and len(parts[-1]) <= 2 and parts[-1].isupper():
-        parts = parts[:-1]
     return " ".join(p[:1].upper() + p[1:].lower() if len(p) > 1 else p.upper() for p in parts)
 
 
+def _is_vice_line(line: str) -> bool:
+    return bool(VICE_PATTERN.search(line))
+
+
+def _parse_player_entries(line: str, role: str) -> list[tuple[str, int, int, bool]]:
+    """Return list of (name, bonus_goal, bonus_cs, is_vice) on one OCR line."""
+    if SKIP_LINE.match(line.strip()):
+        return []
+
+    matches = list(PLAYER_BONUS_RE.finditer(line))
+    if not matches:
+        return []
+
+    entries: list[tuple[str, int, int, bool]] = []
+    for idx, match in enumerate(matches):
+        name = _clean_player_name(match.group(1))
+        if not name or len(name) < 3:
+            continue
+        if name.lower() in {"bonus", "porta", "gol", "fatto", "inviolata"}:
+            continue
+        bonus = int(match.group(2))
+        bonus_cs = bonus if role == "GK" else 0
+        tail = line[match.end() : match.end() + 8]
+        is_vice = bool(VICE_PATTERN.search(tail)) or (
+            bool(VICE_PATTERN.search(line)) and idx == len(matches) - 1
+        )
+        if " vice" in line.lower() and idx == len(matches) - 1:
+            is_vice = True
+        entries.append((name, bonus, bonus_cs, is_vice))
+
+    return entries
+
+
 def extract_players(text: str, home: str, away: str) -> list[PlayerBonus]:
-    """Parse player rows; assign side by team section headers in OCR text."""
-    home_norm = normalize_team(home)
-    away_norm = normalize_team(away)
-    current_side = "home"
+    """Parse FM player rows: two columns (home left, away right) under section headers."""
+    current_role = "MID"
     players: list[PlayerBonus] = []
     seen: set[tuple[str, str]] = set()
 
@@ -209,56 +278,63 @@ def extract_players(text: str, home: str, away: str) -> list[PlayerBonus]:
         if not line:
             continue
 
-        team_hit = _find_team_in_line(line)
-        if team_hit:
-            norm = normalize_team(team_hit)
-            if norm == home_norm:
-                current_side = "home"
+        for pattern, role in SECTION_ROLE:
+            if pattern.search(line) and not PLAYER_BONUS_RE.search(line):
+                current_role = role
+                break
+        else:
+            entries = _parse_player_entries(line, current_role)
+            if not entries:
                 continue
-            if norm == away_norm:
-                current_side = "away"
+
+            sides: list[str]
+            if len(entries) >= 2:
+                sides = ["home", "away"]
+            elif len(entries) == 1:
+                sides = ["home"]
+            else:
                 continue
 
-        parsed = _parse_player_line(line)
-        if not parsed:
-            continue
-
-        key = (parsed["name"].lower(), current_side)
-        if key in seen:
-            continue
-        seen.add(key)
-
-        players.append(
-            PlayerBonus(
-                name=parsed["name"],
-                side=current_side,
-                role=parsed["role"],
-                bonus_goal=parsed["bonus_goal"],
-                bonus_clean_sheet=parsed["bonus_clean_sheet"],
-                vice_allenatore=parsed["vice_allenatore"],
-            )
-        )
+            for entry, side in zip(entries, sides, strict=False):
+                name, bonus_goal, bonus_cs, is_vice = entry
+                key = (name.lower(), side)
+                if key in seen:
+                    continue
+                seen.add(key)
+                players.append(
+                    PlayerBonus(
+                        name=name,
+                        side=side,
+                        role=current_role,
+                        bonus_goal=bonus_goal,
+                        bonus_clean_sheet=bonus_cs,
+                        vice_allenatore=is_vice,
+                    )
+                )
 
     if len(players) < 4:
         raise ValueError(
             f"Letti solo {len(players)} giocatori dagli screenshot (servono almeno 4 oltre al vice). "
-            "Carica tutti gli screen bonus della partita."
+            "Carica tutti gli screen bonus con Portieri, Attaccanti, Centrocampisti."
         )
 
     return players
 
 
+def _ensure_single_vice(players: list[PlayerBonus]) -> None:
+    vices = [p for p in players if p.vice_allenatore]
+    if len(vices) > 1:
+        raise ValueError("Più di un vice allenatore rilevato negli screenshot")
+    if len(vices) == 1 and vices[0].bonus_goal < VICE_MIN_BONUS_GOAL:
+        raise ValueError(
+            f"Vice {vices[0].name}: bonus gol {vices[0].bonus_goal} < {VICE_MIN_BONUS_GOAL}"
+        )
+
+
 def roster_from_ocr_text(text: str) -> MatchRoster:
     home, away = extract_match_teams(text)
     players = extract_players(text, home, away)
-
-    vice = [p for p in players if p.vice_allenatore]
-    if len(vice) > 1:
-        raise ValueError("Più di un vice allenatore rilevato negli screenshot")
-    if vice and vice[0].bonus_goal < VICE_MIN_BONUS_GOAL:
-        raise ValueError(
-            f"Vice {vice[0].name}: bonus gol {vice[0].bonus_goal} < {VICE_MIN_BONUS_GOAL}"
-        )
+    _ensure_single_vice(players)
 
     return MatchRoster(
         match_id=_default_match_id(home, away),
