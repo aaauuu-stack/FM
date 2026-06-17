@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import html
+import logging
+import os
 import sys
-from pathlib import Path
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
@@ -13,6 +15,9 @@ from odds.api_client import get_api_key, load_env_file
 from players.screen_parse import roster_from_screenshots
 from predict.analyze import analyze_match_from_roster
 from web.html_render import render_analysis
+
+logger = logging.getLogger(__name__)
+IS_RENDER = bool(os.environ.get("RENDER"))
 
 app = FastAPI(title="Fantamondiale 2026", docs_url=None, redoc_url=None)
 
@@ -135,9 +140,11 @@ def _form_html(
     *,
     refresh: bool = False,
     no_oddspapi: bool = False,
-    no_scrape: bool = False,
+    no_scrape: bool | None = None,
     error: str = "",
 ) -> str:
+    if no_scrape is None:
+        no_scrape = IS_RENDER
     err = f'<div class="error">{_esc(error)}</div>' if error else ""
     return f"""
 {err}
@@ -163,6 +170,34 @@ def _form_html(
 @app.on_event("startup")
 def _startup() -> None:
     load_env_file()
+    logging.basicConfig(level=logging.INFO)
+
+
+def _run_analysis(
+    blobs: list[bytes],
+    *,
+    refresh: bool,
+    use_oddspapi: bool,
+    use_scrape: bool,
+):
+    roster = roster_from_screenshots(blobs)
+    return analyze_match_from_roster(
+        roster,
+        refresh=refresh,
+        use_oddspapi=use_oddspapi,
+        use_scrape=use_scrape,
+    )
+
+
+async def _read_uploads(screenshots: list[UploadFile]) -> list[bytes]:
+    blobs: list[bytes] = []
+    for upload in screenshots:
+        if not upload.filename:
+            continue
+        data = await upload.read()
+        if data:
+            blobs.append(data)
+    return blobs
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -172,37 +207,42 @@ async def index() -> HTMLResponse:
 
 @app.post("/predict", response_class=HTMLResponse)
 async def predict(
-    screenshots: list[UploadFile] = File(...),
+    screenshots: list[UploadFile] = File(default=[]),
+    screenshot: UploadFile | None = File(default=None),
     refresh: str = Form(""),
     no_oddspapi: str = Form(""),
     no_scrape: str = Form(""),
 ) -> HTMLResponse:
     do_refresh = refresh == "1"
     use_oddspapi = no_oddspapi != "1"
-    use_scrape = no_scrape != "1"
+    use_scrape = no_scrape != "1" and not IS_RENDER
+    skip_scrape_checked = no_scrape == "1" or IS_RENDER
 
     try:
         get_api_key()
     except RuntimeError as exc:
         return HTMLResponse(_page(_form_html(error=str(exc))))
 
-    blobs: list[bytes] = []
-    for upload in screenshots:
-        if not upload.filename:
-            continue
-        data = await upload.read()
-        if data:
-            blobs.append(data)
+    uploads = list(screenshots)
+    if screenshot and screenshot.filename:
+        uploads.append(screenshot)
+    blobs = await _read_uploads(uploads)
 
     if not blobs:
         return HTMLResponse(
-            _page(_form_html(error="Nessuna immagine caricata.", refresh=do_refresh))
+            _page(
+                _form_html(
+                    error="Nessuna immagine caricata.",
+                    refresh=do_refresh,
+                    no_scrape=skip_scrape_checked,
+                )
+            )
         )
 
     try:
-        roster = roster_from_screenshots(blobs)
-        analysis = analyze_match_from_roster(
-            roster,
+        analysis = await asyncio.to_thread(
+            _run_analysis,
+            blobs,
             refresh=do_refresh,
             use_oddspapi=use_oddspapi,
             use_scrape=use_scrape,
@@ -214,7 +254,19 @@ async def predict(
                     error=str(exc),
                     refresh=do_refresh,
                     no_oddspapi=not use_oddspapi,
-                    no_scrape=not use_scrape,
+                    no_scrape=skip_scrape_checked,
+                )
+            )
+        )
+    except Exception as exc:
+        logger.exception("Analisi fallita")
+        return HTMLResponse(
+            _page(
+                _form_html(
+                    error=f"Errore durante l'analisi: {exc}",
+                    refresh=do_refresh,
+                    no_oddspapi=not use_oddspapi,
+                    no_scrape=skip_scrape_checked,
                 )
             )
         )
@@ -232,7 +284,7 @@ async def predict(
     back = _form_html(
         refresh=do_refresh,
         no_oddspapi=not use_oddspapi,
-        no_scrape=not use_scrape,
+        no_scrape=skip_scrape_checked,
     )
     return HTMLResponse(
         _page(result_html + back, title=f"{analysis.home} vs {analysis.away}")

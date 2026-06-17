@@ -20,4 +20,4 @@ RUN pip install --no-cache-dir ".[web]"
 
 EXPOSE 8765
 
-CMD ["sh", "-c", "uvicorn web.app:app --host 0.0.0.0 --port ${PORT:-8765}"]
+CMD ["sh", "-c", "uvicorn web.app:app --host 0.0.0.0 --port ${PORT:-8765} --timeout-keep-alive 120 --log-level info"]

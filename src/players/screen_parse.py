@@ -67,21 +67,47 @@ def ocr_image_bytes(data: bytes) -> str:
     """Run Tesseract OCR on one screenshot."""
     try:
         import pytesseract
-        from PIL import Image
+        from PIL import Image, ImageOps
     except ImportError as exc:
         raise RuntimeError(
             "OCR non disponibile: installa Pillow e pytesseract (e Tesseract sul server)"
         ) from exc
 
+    if len(data) > 5 * 1024 * 1024:
+        raise ValueError("Screenshot troppo grande (max 5 MB ciascuno)")
+
     image = Image.open(io.BytesIO(data))
+    image = ImageOps.exif_transpose(image)
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
-    return pytesseract.image_to_string(image, lang="ita+eng")
+
+    max_side = 1400
+    width, height = image.size
+    if max(width, height) > max_side:
+        scale = max_side / max(width, height)
+        image = image.resize(
+            (max(1, int(width * scale)), max(1, int(height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+    gray = image.convert("L")
+
+    try:
+        return pytesseract.image_to_string(gray, lang="ita+eng")
+    except pytesseract.TesseractError:
+        return pytesseract.image_to_string(gray, lang="eng")
 
 
 def ocr_images(images: list[bytes]) -> str:
-    parts = [ocr_image_bytes(blob).strip() for blob in images if blob]
-    return "\n\n".join(p for p in parts if p)
+    if len(images) > 6:
+        raise ValueError("Massimo 6 screenshot per analisi")
+    parts: list[str] = []
+    for blob in images:
+        if not blob:
+            continue
+        text = ocr_image_bytes(blob).strip()
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
 
 
 def _detect_role(fragment: str) -> str | None:

@@ -8,6 +8,8 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /
     envVars:
+      - key: RENDER
+        value: "true"
       - key: ODDS_API_KEY
         sync: false
       - key: ODDSPAPI_API_KEY
