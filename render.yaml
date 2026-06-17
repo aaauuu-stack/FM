@@ -5,6 +5,7 @@ services:
     name: fantamondiale
     runtime: docker
     plan: free
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /
     envVars:
       - key: ODDS_API_KEY

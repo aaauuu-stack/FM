@@ -10,7 +10,8 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY data ./data
 
-RUN pip install --no-cache-dir -e ".[web,scrape]"
+# web only — scrape (curl_cffi) optional and can fail on slim images
+RUN pip install --no-cache-dir ".[web]"
 
 EXPOSE 8765
 
