@@ -170,11 +170,11 @@ def _form_html(
 </form>
 <p class="meta" style="margin-top:1rem">Usa cache di default — spunta Refresh solo quando vuoi aggiornare le quote.</p>
 <script>
-document.querySelector('form').addEventListener('submit', function() {
+document.querySelector('form').addEventListener('submit', function() {{
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
   btn.textContent = 'Analisi in corso (30–90 sec)…';
-});
+}});
 </script>
 """
 
