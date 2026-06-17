@@ -8,19 +8,37 @@ from dataclasses import dataclass, field
 
 from odds.api_client import fetch_odds
 from odds.api_normalize import event_to_match_data, find_event
+from odds.event_odds_bundle import fetch_combined_event_player_odds
 from odds.match_loader import MatchOdds
 from odds.merge_providers import merge_match_data, merge_match_data_fill_gaps
+from odds.oddspapi_bundle import OddsPapiBundle, fetch_oddspapi_bundle
 from odds.oddspapi_client import oddspapi_configured
-from odds.oddspapi_normalize import fetch_oddspapi_match_odds
-from odds.oddspapi_player_props import fetch_oddspapi_player_props
-from odds.scrape_normalize import fetch_scraped_match_odds
-from odds.scrape_sofascore_players import fetch_sofascore_player_props
+from odds.sofascore_bundle import SofaScoreBundle, fetch_sofascore_bundle
 from odds.scrape_sofascore_subs import TeamSubProfile, fetch_team_sub_profile
 from players.models import MatchRoster
 
 
 def _needs_correct_score(odds: MatchOdds) -> bool:
     return not odds.correct_score or not odds.half_time_correct_score
+
+
+def _merge_first_card(
+    oddspapi: OddsPapiBundle | None,
+    sofa: SofaScoreBundle | None,
+) -> tuple[dict[str, float], str]:
+    probs: dict[str, float] = {}
+    notes: list[str] = []
+    if oddspapi and oddspapi.first_card_probs:
+        probs.update(oddspapi.first_card_probs)
+        if oddspapi.first_card_note:
+            notes.append(oddspapi.first_card_note)
+    if sofa and sofa.first_card_probs:
+        for name, p in sofa.first_card_probs.items():
+            if name not in probs:
+                probs[name] = p
+        if sofa.first_card_note:
+            notes.append(sofa.first_card_note)
+    return probs, (" | ".join(notes) if notes else "")
 
 
 @dataclass
@@ -49,10 +67,6 @@ def build_match_parallel(
 
     Returns (match, source_note, requests_remaining, event_id, prefetch).
     """
-    from odds.event_kl_model import fetch_first_card_bookmaker_probs
-    from odds.goalscorer import fetch_goalscorer_probabilities_from_event
-    from odds.player_props import fetch_event_player_props_by_id
-
     fetch_result = fetch_odds(sport=sport, region=region, force_refresh=refresh)
     event = find_event(fetch_result.events, roster.home, roster.away)
     match = event_to_match_data(event)
@@ -61,39 +75,32 @@ def build_match_parallel(
 
     need_scrape_match = use_scrape and _needs_correct_score(match.odds)
     prefetch = MatchPrefetch()
+    oddspapi_bundle: OddsPapiBundle | None = None
+    sofa_bundle: SofaScoreBundle | None = None
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         futures: dict[str, object] = {}
 
         if use_oddspapi and oddspapi_configured():
-            futures["op_match"] = pool.submit(
-                fetch_oddspapi_match_odds,
-                roster.home,
-                roster.away,
-                kickoff_iso=kickoff,
-            )
-            futures["op_props"] = pool.submit(
-                fetch_oddspapi_player_props,
+            futures["oddspapi"] = pool.submit(
+                fetch_oddspapi_bundle,
                 roster.home,
                 roster.away,
                 kickoff,
-            )
-
-        if need_scrape_match:
-            futures["scrape"] = pool.submit(
-                fetch_scraped_match_odds,
-                roster.home,
-                roster.away,
-                match.odds,
-                kickoff_iso=kickoff,
+                need_match_cs=True,
+                need_props=True,
+                need_first_card=True,
             )
 
         if use_scrape:
             futures["sofa"] = pool.submit(
-                fetch_sofascore_player_props,
+                fetch_sofascore_bundle,
                 roster.home,
                 roster.away,
                 kickoff,
+                need_match_cs=need_scrape_match,
+                need_props=True,
+                need_first_card=True,
             )
 
         futures["sub_home"] = pool.submit(
@@ -109,22 +116,9 @@ def build_match_parallel(
             opponent=roster.home,
         )
 
-        if use_oddspapi or use_scrape:
-            futures["first_card"] = pool.submit(
-                fetch_first_card_bookmaker_probs,
-                roster,
-            )
-
         if event_id:
-            futures["goalscorer"] = pool.submit(
-                fetch_goalscorer_probabilities_from_event,
-                event_id,
-                sport=sport,
-                region=region,
-                force_refresh=refresh,
-            )
-            futures["event_props"] = pool.submit(
-                fetch_event_player_props_by_id,
+            futures["event_odds"] = pool.submit(
+                fetch_combined_event_player_odds,
                 event_id,
                 sport=sport,
                 region=region,
@@ -133,54 +127,58 @@ def build_match_parallel(
 
         sources = ["The Odds API"]
 
-        if "op_match" in futures:
+        for key, future in futures.items():
+            if key in {"sub_home", "sub_away", "event_odds"}:
+                continue
             try:
-                op_odds = futures["op_match"].result()
-                match = merge_match_data(match, op_odds)
-                sources.append("OddsPapi")
+                result = future.result()
             except (RuntimeError, ValueError) as exc:
-                print(f"  [warn] OddsPapi non disponibile: {exc}", file=sys.stderr)
+                if key == "oddspapi":
+                    print(f"  [warn] OddsPapi non disponibile: {exc}", file=sys.stderr)
+                elif key == "sofa":
+                    print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
+                continue
 
-        if "scrape" in futures:
-            try:
-                scrape_overlay, scrape_sources = futures["scrape"].result()
-                match = merge_match_data_fill_gaps(match, scrape_overlay)
-                sources.extend(scrape_sources)
-            except ValueError as exc:
-                print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
+            if key == "oddspapi":
+                oddspapi_bundle = result
+                if oddspapi_bundle.match_odds:
+                    match = merge_match_data(match, oddspapi_bundle.match_odds)
+                    sources.append("OddsPapi")
+            elif key == "sofa":
+                sofa_bundle = result
+                if need_scrape_match and sofa_bundle.match_odds:
+                    match = merge_match_data_fill_gaps(match, sofa_bundle.match_odds)
+                    if sofa_bundle.match_odds.correct_score or sofa_bundle.match_odds.half_time_correct_score:
+                        sources.append("SofaScore")
 
-        if "op_props" in futures:
-            try:
-                prefetch.oddspapi_props = futures["op_props"].result()
-            except (RuntimeError, ValueError):
-                pass
+        if oddspapi_bundle and oddspapi_bundle.goal_probs is not None:
+            prefetch.oddspapi_props = (
+                oddspapi_bundle.goal_probs,
+                oddspapi_bundle.card_probs or {},
+                oddspapi_bundle.props_note,
+            )
 
-        if "sofa" in futures:
-            try:
-                prefetch.sofa_props = futures["sofa"].result()
-            except RuntimeError:
-                pass
+        if sofa_bundle and sofa_bundle.goal_probs is not None:
+            prefetch.sofa_props = (
+                sofa_bundle.goal_probs,
+                sofa_bundle.card_probs or {},
+                sofa_bundle.stats or {},
+                sofa_bundle.props_note,
+            )
 
         prefetch.sub_profiles = {
             "home": futures["sub_home"].result(),
             "away": futures["sub_away"].result(),
         }
 
-        if "first_card" in futures:
-            try:
-                prefetch.first_card = futures["first_card"].result()
-            except (RuntimeError, ValueError):
-                pass
+        if use_oddspapi or use_scrape:
+            prefetch.first_card = _merge_first_card(oddspapi_bundle, sofa_bundle)
 
-        if "goalscorer" in futures:
+        if "event_odds" in futures:
             try:
-                prefetch.goalscorer_probs = futures["goalscorer"].result()
-            except RuntimeError:
-                prefetch.goalscorer_probs = {}
-
-        if "event_props" in futures:
-            try:
-                prefetch.event_player_props = futures["event_props"].result()
+                gs, props = futures["event_odds"].result()
+                prefetch.goalscorer_probs = gs
+                prefetch.event_player_props = props
             except RuntimeError:
                 pass
 

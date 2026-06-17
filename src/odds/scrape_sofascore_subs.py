@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from odds.api_normalize import teams_match
@@ -169,6 +170,58 @@ def _role_from_lineups(lineups: dict, side_key: str, player_name: str) -> str | 
     return None
 
 
+def _process_historical_event(
+    event: dict,
+    team_id: int,
+) -> tuple[int, dict[str, int], dict[str, int], dict[str, int], dict[str, int]] | None:
+    """Fetch lineups+incidents for one past match; return counts or None."""
+    event_id = int(event.get("id") or 0)
+    if not event_id:
+        return None
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        lineups_f = pool.submit(_fetch_lineups, event_id)
+        incidents_f = pool.submit(_fetch_incidents, event_id)
+        lineups = lineups_f.result()
+        incidents = incidents_f.result()
+
+    if not lineups:
+        return None
+
+    home_id = int((event.get("homeTeam") or {}).get("id") or 0)
+    side_key = "home" if home_id == team_id else "away"
+    starters = _starters_from_lineups(lineups, side_key)
+    if not starters:
+        return None
+
+    first_out = _first_sub_out_by_side(incidents).get(side_key)
+    if not first_out:
+        return None
+
+    first_sub_counts: dict[str, int] = {}
+    starter_counts: dict[str, int] = {}
+    role_first: dict[str, int] = {}
+    role_starter: dict[str, int] = {}
+
+    matched = None
+    for s in starters:
+        starter_counts[s] = starter_counts.get(s, 0) + 1
+        if players_match(s, first_out):
+            matched = s
+
+    target = matched or first_out
+    first_sub_counts[target] = first_sub_counts.get(target, 0) + 1
+    role = _role_from_lineups(lineups, side_key, target)
+    if role:
+        role_first[role] = role_first.get(role, 0) + 1
+    for s in starters:
+        r = _role_from_lineups(lineups, side_key, s)
+        if r:
+            role_starter[r] = role_starter.get(r, 0) + 1
+
+    return 1, first_sub_counts, starter_counts, role_first, role_starter
+
+
 def fetch_team_sub_profile(
     team_query: str,
     kickoff_iso: str | None = None,
@@ -194,40 +247,24 @@ def fetch_team_sub_profile(
     role_starter: dict[str, int] = {}
     used = 0
 
-    for event in finished:
-        event_id = int(event.get("id") or 0)
-        if not event_id:
-            continue
-        lineups = _fetch_lineups(event_id)
-        if not lineups:
-            continue
-
-        home_id = int((event.get("homeTeam") or {}).get("id") or 0)
-        side_key = "home" if home_id == team_id else "away"
-        starters = _starters_from_lineups(lineups, side_key)
-        if not starters:
-            continue
-
-        first_out = _first_sub_out_by_side(_fetch_incidents(event_id)).get(side_key)
-        if not first_out:
-            continue
-
-        used += 1
-        matched = None
-        for s in starters:
-            starter_counts[s] = starter_counts.get(s, 0) + 1
-            if players_match(s, first_out):
-                matched = s
-
-        target = matched or first_out
-        first_sub_counts[target] = first_sub_counts.get(target, 0) + 1
-        role = _role_from_lineups(lineups, side_key, target)
-        if role:
-            role_first[role] = role_first.get(role, 0) + 1
-        for s in starters:
-            r = _role_from_lineups(lineups, side_key, s)
-            if r:
-                role_starter[r] = role_starter.get(r, 0) + 1
+    workers = min(6, max(1, len(finished)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for result in pool.map(
+            lambda ev: _process_historical_event(ev, team_id),
+            finished,
+        ):
+            if result is None:
+                continue
+            n, fs, sc, rf, rs = result
+            used += n
+            for k, v in fs.items():
+                first_sub_counts[k] = first_sub_counts.get(k, 0) + v
+            for k, v in sc.items():
+                starter_counts[k] = starter_counts.get(k, 0) + v
+            for k, v in rf.items():
+                role_first[k] = role_first.get(k, 0) + v
+            for k, v in rs.items():
+                role_starter[k] = role_starter.get(k, 0) + v
 
     player_rates = {
         name: first_sub_counts.get(name, 0) / max(starter_counts.get(name, 0), 1)

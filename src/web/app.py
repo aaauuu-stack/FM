@@ -269,13 +269,13 @@ async def predict(
                 use_oddspapi=use_oddspapi,
                 use_scrape=use_scrape,
             ),
-            timeout=180.0,
+            timeout=300.0,
         )
     except TimeoutError:
         return HTMLResponse(
             _page(
                 _form_html(
-                    error="Analisi troppo lenta (>3 min). Riprova con 1–2 screenshot nitidi, senza Refresh.",
+                    error="Analisi troppo lenta (>5 min). Riprova con 1–2 screenshot nitidi, senza Refresh.",
                     refresh=do_refresh,
                     no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,
