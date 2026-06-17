@@ -1,0 +1,7 @@
+match_id: FRA-BRA
+home: Francia
+away: Brasile
+kickoff: "2026-06-20T20:00:00"
+odds:
+  h2h: { home: 2.60, draw: 3.20, away: 2.75 }
+  totals: { line: 2.5, over: 2.00, under: 1.85 }

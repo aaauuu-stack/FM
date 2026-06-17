@@ -1,0 +1,64 @@
+# Statistiche nazionali recenti (per90 in partita NT, stime conservative).
+# Chiave team = normalize_team (es. england, croatia).
+# Aggiornare man mano che escono dati WC 2026.
+
+teams:
+  england:
+    players:
+      Kane:
+        goals_per90: 0.58
+        yellow_per90: 0.09
+        red_per90: 0.008
+        minutes_expected: 88
+      Toney:
+        goals_per90: 0.42
+        yellow_per90: 0.11
+        minutes_expected: 70
+      Watkins:
+        goals_per90: 0.48
+        yellow_per90: 0.07
+        minutes_expected: 75
+      Bellingham:
+        goals_per90: 0.32
+        yellow_per90: 0.16
+        minutes_expected: 86
+      Rice:
+        goals_per90: 0.06
+        yellow_per90: 0.21
+        minutes_expected: 90
+      Stones:
+        goals_per90: 0.03
+        yellow_per90: 0.09
+        minutes_expected: 90
+      Walker:
+        goals_per90: 0.02
+        yellow_per90: 0.13
+        minutes_expected: 88
+      Pickford:
+        yellow_per90: 0.04
+        minutes_expected: 90
+  croatia:
+    players:
+      Kramaric:
+        goals_per90: 0.38
+        yellow_per90: 0.10
+        minutes_expected: 78
+      Mandukic:
+        goals_per90: 0.35
+        yellow_per90: 0.12
+        minutes_expected: 65
+      Modric:
+        goals_per90: 0.12
+        yellow_per90: 0.19
+        minutes_expected: 85
+      Sucic:
+        goals_per90: 0.10
+        yellow_per90: 0.14
+        minutes_expected: 80
+      Gvardiol:
+        goals_per90: 0.02
+        yellow_per90: 0.15
+        minutes_expected: 90
+      Livakovic:
+        yellow_per90: 0.03
+        minutes_expected: 90

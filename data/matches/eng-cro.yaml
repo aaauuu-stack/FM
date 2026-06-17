@@ -1,0 +1,17 @@
+match_id: ENG-CRO
+home: Inghilterra
+away: Croazia
+kickoff: "2026-06-15T21:00:00"
+odds:
+  h2h: { home: 1.65, draw: 3.80, away: 5.00 }
+  totals: { line: 2.5, over: 1.90, under: 1.95 }
+  correct_score:
+    "1-0": 7.50
+    "2-0": 9.00
+    "2-1": 9.50
+    "3-1": 15.00
+    "0-0": 11.00
+    "1-1": 6.50
+    "0-1": 12.00
+    "1-2": 14.00
+  ht_result: { home: 2.40, draw: 2.20, away: 5.50 }

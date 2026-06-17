@@ -1,0 +1,61 @@
+[
+  {
+    "id": "evt1",
+    "sport_key": "soccer_fifa_world_cup",
+    "commence_time": "2026-06-15T21:00:00Z",
+    "home_team": "England",
+    "away_team": "Croatia",
+    "bookmakers": [
+      {
+        "key": "pinnacle",
+        "title": "Pinnacle",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "England", "price": 1.65},
+              {"name": "Croatia", "price": 5.0},
+              {"name": "Draw", "price": 3.8}
+            ]
+          },
+          {
+            "key": "totals",
+            "outcomes": [
+              {"name": "Over", "price": 1.9, "point": 2.5},
+              {"name": "Under", "price": 1.95, "point": 2.5}
+            ]
+          },
+          {
+            "key": "h2h_h1",
+            "outcomes": [
+              {"name": "England", "price": 2.4},
+              {"name": "Croatia", "price": 5.5},
+              {"name": "Draw", "price": 2.2}
+            ]
+          }
+        ]
+      },
+      {
+        "key": "betfair",
+        "title": "Betfair",
+        "markets": [
+          {
+            "key": "h2h",
+            "outcomes": [
+              {"name": "England", "price": 1.70},
+              {"name": "Croatia", "price": 4.80},
+              {"name": "Draw", "price": 3.75}
+            ]
+          },
+          {
+            "key": "totals",
+            "outcomes": [
+              {"name": "Over", "price": 1.88, "point": 2.5},
+              {"name": "Under", "price": 1.98, "point": 2.5}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

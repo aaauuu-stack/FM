@@ -1,0 +1,17 @@
+# Render Blueprint — deploy gratuito (Web Service free tier)
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: fantamondiale
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: ODDS_API_KEY
+        sync: false
+      - key: ODDSPAPI_API_KEY
+        sync: false
+      - key: ODDS_REGION
+        value: eu
+      - key: ODDS_SPORT
+        value: soccer_fifa_world_cup

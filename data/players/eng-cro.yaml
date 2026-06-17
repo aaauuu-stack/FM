@@ -1,0 +1,75 @@
+# Bonus giocatori FM — Inghilterra vs Croazia (da screenshot app)
+# Compila dopo aver caricato gli screen in chat o manualmente dall'app.
+
+match_id: ENG-CRO
+home: England
+away: Croatia
+kickoff: "2026-06-17T20:00:00Z"
+
+players:
+  # Portieri
+  - name: Pickford
+    side: home
+    role: GK
+    bonus_goal: 10
+    bonus_clean_sheet: 4
+  - name: Livakovic
+    side: away
+    role: GK
+    bonus_goal: 10
+    bonus_clean_sheet: 5
+
+  # Attaccanti
+  - name: Kane
+    side: home
+    role: FWD
+    bonus_goal: 3
+  - name: Toney
+    side: home
+    role: FWD
+    bonus_goal: 9
+  - name: Watkins
+    side: home
+    role: FWD
+    bonus_goal: 6
+  - name: Kramaric
+    side: away
+    role: FWD
+    bonus_goal: 5
+  - name: Mandukic
+    side: away
+    role: FWD
+    bonus_goal: 8
+
+  # Centrocampisti
+  - name: Bellingham
+    side: home
+    role: MID
+    bonus_goal: 4
+  - name: Rice
+    side: home
+    role: MID
+    bonus_goal: 7
+  - name: Modric
+    side: away
+    role: MID
+    bonus_goal: 6
+  - name: Sucic
+    side: away
+    role: MID
+    bonus_goal: 12
+    vice_allenatore: true   # già ticcato nello screen FM
+
+  # Difensori
+  - name: Stones
+    side: home
+    role: DEF
+    bonus_goal: 8
+  - name: Gvardiol
+    side: away
+    role: DEF
+    bonus_goal: 9
+  - name: Walker
+    side: home
+    role: DEF
+    bonus_goal: 10

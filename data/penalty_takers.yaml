@@ -1,0 +1,59 @@
+# Rigoristi ufficiali per nazionale (aggiornare a convocazione WC 2026).
+# primary: batte >~75% dei rigori della squadra
+# backup: secondo rigorista
+# conversion_rate: storico nazionale/ recente (0-1)
+
+teams:
+  england:
+    primary: Kane
+    backup: Bellingham
+    conversion_rate: 0.84
+    primary_share: 0.80
+  croatia:
+    primary: Modric
+    backup: Kramaric
+    conversion_rate: 0.79
+    primary_share: 0.75
+  france:
+    primary: Mbappe
+    backup: Griezmann
+    conversion_rate: 0.82
+    primary_share: 0.78
+  brazil:
+    primary: Neymar
+    backup: Vinicius Jr
+    conversion_rate: 0.80
+    primary_share: 0.75
+  germany:
+    primary: Musiala
+    backup: Havertz
+    conversion_rate: 0.81
+    primary_share: 0.72
+  italy:
+    primary: Immobile
+    backup: Barella
+    conversion_rate: 0.83
+    primary_share: 0.78
+  spain:
+    primary: Morata
+    backup: Oyarzabal
+    conversion_rate: 0.80
+    primary_share: 0.76
+  argentina:
+    primary: Messi
+    backup: Lautaro Martinez
+    conversion_rate: 0.86
+    primary_share: 0.85
+  portugal:
+    primary: Ronaldo
+    backup: Bruno Fernandes
+    conversion_rate: 0.84
+    primary_share: 0.82
+  netherlands:
+    primary: Depay
+    backup: Gakpo
+    conversion_rate: 0.78
+    primary_share: 0.75
+
+# P(almeno un rigore assegnato alla squadra in una partita)
+match_penalty_rate: 0.26
