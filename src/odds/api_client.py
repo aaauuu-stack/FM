@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from odds.fast_mode import http_timeout
+
 DEFAULT_BASE_URL = "https://api.the-odds-api.com/v4"
 DEFAULT_SPORT = "soccer_fifa_world_cup"
 DEFAULT_REGION = "eu"
@@ -129,7 +131,7 @@ def fetch_odds(
     url = f"{DEFAULT_BASE_URL}/sports/{sport}/odds/?{params}"
 
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        with urllib.request.urlopen(url, timeout=http_timeout(30)) as response:
             body = response.read().decode("utf-8")
             headers = {k.lower(): v for k, v in response.headers.items()}
     except urllib.error.HTTPError as exc:
@@ -210,7 +212,7 @@ def fetch_event_odds(
     url = f"{DEFAULT_BASE_URL}/sports/{sport}/events/{event_id}/odds?{params}"
 
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        with urllib.request.urlopen(url, timeout=http_timeout(30)) as response:
             body = response.read().decode("utf-8")
             headers = {k.lower(): v for k, v in response.headers.items()}
     except urllib.error.HTTPError as exc:

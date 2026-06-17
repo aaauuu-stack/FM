@@ -15,6 +15,7 @@ from odds.oddspapi_player_props import extract_player_yes_probs
 from odds.scrape_client import fetch_json
 from odds.scrape_sofascore import _sofascore_event_id, _sofascore_headers
 from odds.scrape_sofascore_players import _choice_decimal
+from odds.fast_mode import is_fast_mode
 from odds.scrape_sofascore_subs import TeamSubProfile, fetch_team_sub_profile
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
@@ -125,18 +126,22 @@ def estimate_first_sub_probs(
 
     profiles: dict[str, TeamSubProfile] = {}
     notes: list[str] = []
-    for side, team_name, opp in (
-        ("home", roster.home, roster.away),
-        ("away", roster.away, roster.home),
-    ):
-        prof = fetch_team_sub_profile(
-            team_name,
-            roster.kickoff,
-            opponent=opp,
-        )
-        profiles[side] = prof
-        if prof.sample_matches:
-            notes.append(f"{team_name}: {prof.sample_matches}p")
+    if is_fast_mode():
+        profiles = {"home": TeamSubProfile(), "away": TeamSubProfile()}
+        notes.append("modalità veloce")
+    else:
+        for side, team_name, opp in (
+            ("home", roster.home, roster.away),
+            ("away", roster.away, roster.home),
+        ):
+            prof = fetch_team_sub_profile(
+                team_name,
+                roster.kickoff,
+                opponent=opp,
+            )
+            profiles[side] = prof
+            if prof.sample_matches:
+                notes.append(f"{team_name}: {prof.sample_matches}p")
 
     weights: dict[str, float] = {}
     for player in starters:
@@ -258,7 +263,10 @@ def estimate_first_card_probs(
     if not pool:
         return {}, "L: nessun titolare"
 
-    book_probs, book_note = fetch_first_card_bookmaker_probs(roster)
+    book_probs: dict[str, float] = {}
+    book_note = ""
+    if not is_fast_mode():
+        book_probs, book_note = fetch_first_card_bookmaker_probs(roster)
     matched_book = 0
     hazards: dict[str, float] = {}
 

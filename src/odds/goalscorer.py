@@ -9,6 +9,7 @@ from typing import Any
 from odds.api_client import fetch_odds
 from odds.api_normalize import find_event
 from odds.devig import proportional_devig
+from odds.fast_mode import is_fast_mode
 from odds.oddspapi_player_props import attach_oddspapi_player_props
 from odds.player_events import attach_event_probs
 from odds.player_props import attach_player_props_from_api
@@ -219,6 +220,12 @@ def attach_all_player_probs(
     force_refresh: bool = False,
 ) -> tuple[MatchRoster, str]:
     """Attach player probs: OddsPapi + SofaScore scrape, API, rigoristi, malus."""
+    if is_fast_mode():
+        roster = attach_poisson_goal_estimates(roster, match)
+        roster = attach_clean_sheet_probs(roster, match)
+        roster = attach_event_probs(roster, match)
+        return roster, "P(gol) Poisson — modalità veloce Render"
+
     notes: list[str] = []
     kickoff = roster.kickoff or getattr(match, "kickoff", None)
 

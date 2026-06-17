@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from cli.fetch_and_predict import _build_match_from_apis
+from odds.fast_mode import is_fast_mode
 from odds.goalscorer import attach_all_player_probs
 from players.models import MatchRoster
 from players.roster_loader import load_roster
@@ -48,15 +49,18 @@ def _analyze_with_roster(
     use_scrape: bool = True,
     top_n: int = 5,
 ) -> MatchAnalysis:
+    fast = is_fast_mode()
     match, source_note, remaining = _build_match_from_apis(
         roster.home,
         roster.away,
         sport=sport,
         region=region,
         refresh=refresh,
-        use_oddspapi=use_oddspapi,
-        use_scrape=use_scrape,
+        use_oddspapi=use_oddspapi and not fast,
+        use_scrape=use_scrape and not fast,
     )
+    if fast and "modalità veloce" not in source_note:
+        source_note = f"{source_note} | modalità veloce"
 
     dist, ranked = rank_predictions(match, top_n=top_n)
     result_report: EvReport | None = None

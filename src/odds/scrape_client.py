@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from odds.api_client import _project_root
+from odds.fast_mode import http_timeout
 
 DEFAULT_CACHE_TTL = 3 * 3600
 BROWSER_HEADERS = {
@@ -54,15 +55,18 @@ def _write_cache(cache_file: Path, data: Any) -> None:
 
 def _fetch_live(url: str, headers: dict[str, str]) -> bytes:
     """GET with curl_cffi when installed, else urllib."""
+    timeout = http_timeout(45.0)
     try:
         from curl_cffi import requests as cffi_requests
 
-        response = cffi_requests.get(url, headers=headers, impersonate="chrome120", timeout=45)
+        response = cffi_requests.get(
+            url, headers=headers, impersonate="chrome120", timeout=timeout
+        )
         response.raise_for_status()
         return response.content
     except ImportError:
         request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
 
 

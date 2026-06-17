@@ -139,12 +139,14 @@ def _page(body: str, title: str = "Fantamondiale 2026") -> str:
 def _form_html(
     *,
     refresh: bool = False,
-    no_oddspapi: bool = False,
+    no_oddspapi: bool | None = None,
     no_scrape: bool | None = None,
     error: str = "",
 ) -> str:
     if no_scrape is None:
         no_scrape = IS_RENDER
+    if no_oddspapi is None:
+        no_oddspapi = IS_RENDER
     err = f'<div class="error">{_esc(error)}</div>' if error else ""
     return f"""
 {err}
@@ -156,6 +158,7 @@ def _form_html(
     Carica 1–5 screen dall'app Fantamondiale: header partita (es. Uzbekistan – Colombia)
     e liste giocatori con bonus. Casa, ospite e vice vengono rilevati da soli.
   </p>
+  {"<p class='upload-hint'>Analisi ~15–30 sec su cloud. Non chiudere la pagina.</p>" if IS_RENDER else ""}
   <div class="checks">
     <label><input type="checkbox" name="refresh" value="1"{" checked" if refresh else ""}> Refresh quote (API live)</label>
     <label><input type="checkbox" name="no_oddspapi" value="1"{" checked" if no_oddspapi else ""}> Salta OddsPapi</label>
@@ -214,9 +217,10 @@ async def predict(
     no_scrape: str = Form(""),
 ) -> HTMLResponse:
     do_refresh = refresh == "1"
-    use_oddspapi = no_oddspapi != "1"
+    use_oddspapi = no_oddspapi != "1" and not IS_RENDER
     use_scrape = no_scrape != "1" and not IS_RENDER
     skip_scrape_checked = no_scrape == "1" or IS_RENDER
+    skip_oddspapi_checked = no_oddspapi == "1" or IS_RENDER
 
     try:
         get_api_key()
@@ -253,7 +257,7 @@ async def predict(
                 _form_html(
                     error=str(exc),
                     refresh=do_refresh,
-                    no_oddspapi=not use_oddspapi,
+                    no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,
                 )
             )
@@ -265,7 +269,7 @@ async def predict(
                 _form_html(
                     error=f"Errore durante l'analisi: {exc}",
                     refresh=do_refresh,
-                    no_oddspapi=not use_oddspapi,
+                    no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,
                 )
             )
@@ -283,7 +287,7 @@ async def predict(
     result_html = detected + render_analysis(analysis)
     back = _form_html(
         refresh=do_refresh,
-        no_oddspapi=not use_oddspapi,
+        no_oddspapi=skip_oddspapi_checked,
         no_scrape=skip_scrape_checked,
     )
     return HTMLResponse(
