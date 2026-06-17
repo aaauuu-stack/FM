@@ -68,13 +68,16 @@ def fetch_oddspapi_player_props(
     if not oddspapi_configured():
         return {}, {}, ""
 
-    catalog = fetch_markets_catalog()
-    goal_id, card_id = discover_player_market_ids(catalog)
-    if goal_id is None and card_id is None:
-        return {}, {}, "OddsPapi: mercati player prop assenti"
+    try:
+        catalog = fetch_markets_catalog()
+        goal_id, card_id = discover_player_market_ids(catalog)
+        if goal_id is None and card_id is None:
+            return {}, {}, "OddsPapi: mercati player prop assenti"
 
-    fixture = lookup_oddspapi_fixture(home_query, away_query, kickoff_iso)
-    odds_payload = fetch_odds(str(fixture["fixtureId"]))
+        fixture = lookup_oddspapi_fixture(home_query, away_query, kickoff_iso)
+        odds_payload = fetch_odds(str(fixture["fixtureId"]))
+    except (ValueError, RuntimeError) as exc:
+        return {}, {}, f"OddsPapi: {exc}"
 
     goal_probs = extract_player_yes_probs(odds_payload, goal_id) if goal_id else {}
     card_probs = extract_player_yes_probs(odds_payload, card_id) if card_id else {}

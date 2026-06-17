@@ -49,13 +49,16 @@ def fetch_oddspapi_bundle(
     if not oddspapi_configured():
         return bundle
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        f_catalog = pool.submit(fetch_markets_catalog)
-        f_fixture = pool.submit(
-            lookup_oddspapi_fixture, home_query, away_query, kickoff_iso
-        )
-        catalog = f_catalog.result()
-        fixture = f_fixture.result()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_catalog = pool.submit(fetch_markets_catalog)
+            f_fixture = pool.submit(
+                lookup_oddspapi_fixture, home_query, away_query, kickoff_iso
+            )
+            catalog = f_catalog.result()
+            fixture = f_fixture.result()
+    except (ValueError, RuntimeError):
+        return bundle
 
     bundle.sofascore_event_id = _sofascore_id_from_fixture(fixture)
     payload = fetch_odds(str(fixture["fixtureId"]))

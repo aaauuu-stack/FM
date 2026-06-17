@@ -124,8 +124,8 @@ def lookup_oddspapi_fixture(
         else:
             kickoff = datetime.now(timezone.utc)
 
-        from_iso = (kickoff - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        to_iso = (kickoff + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        from_iso = (kickoff - timedelta(days=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        to_iso = (kickoff + timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
         fixtures = fetch_fixtures(from_iso, to_iso)
         return _find_fixture(fixtures, home_query, away_query)
 
@@ -146,8 +146,8 @@ def fetch_oddspapi_match_odds(
     else:
         kickoff = datetime.now(timezone.utc)
 
-    from_iso = (kickoff - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    to_iso = (kickoff + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    from_iso = (kickoff - timedelta(days=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    to_iso = (kickoff + timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     catalog = fetch_markets_catalog()
     ft_market_id, ht_market_id = _discover_market_ids(catalog)
