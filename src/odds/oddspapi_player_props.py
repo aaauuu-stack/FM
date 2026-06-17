@@ -91,11 +91,16 @@ def fetch_oddspapi_player_props(
 def attach_oddspapi_player_props(
     roster: MatchRoster,
     kickoff_iso: str | None = None,
+    *,
+    prefetched: tuple[dict[str, float], dict[str, float], str] | None = None,
 ) -> tuple[MatchRoster, str]:
     """Merge OddsPapi bookmaker player props into roster."""
-    goal_probs, card_probs, note = fetch_oddspapi_player_props(
-        roster.home, roster.away, kickoff_iso
-    )
+    if prefetched is not None:
+        goal_probs, card_probs, note = prefetched
+    else:
+        goal_probs, card_probs, note = fetch_oddspapi_player_props(
+            roster.home, roster.away, kickoff_iso
+        )
     if not goal_probs and not card_probs:
         return roster, note
 

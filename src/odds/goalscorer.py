@@ -6,13 +6,12 @@ import math
 import statistics
 from typing import Any
 
-from odds.api_client import fetch_odds
+from odds.api_client import fetch_event_odds, fetch_odds
 from odds.api_normalize import find_event
 from odds.devig import proportional_devig
-from odds.fast_mode import is_fast_mode
 from odds.oddspapi_player_props import attach_oddspapi_player_props
 from odds.player_events import attach_event_probs
-from odds.player_props import attach_player_props_from_api
+from odds.player_props import attach_player_props_from_api, apply_event_player_props
 from odds.scrape_sofascore_players import attach_sofascore_player_probs
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
@@ -35,6 +34,51 @@ def _collect_goalscorer_prices(event: dict[str, Any]) -> dict[str, list[float]]:
                 if name and price > 1.0:
                     prices.setdefault(name, []).append(price)
     return prices
+
+
+def fetch_goalscorer_probabilities_from_event(
+    event_id: str,
+    *,
+    sport: str,
+    region: str,
+    force_refresh: bool = False,
+) -> dict[str, float]:
+    """Return player name -> de-vigged P(anytime goalscorer) for one event."""
+    result = fetch_event_odds(
+        event_id,
+        sport=sport,
+        region=region,
+        markets=GOALSCORER_MARKET,
+        force_refresh=force_refresh,
+    )
+    raw_prices = _collect_goalscorer_prices(result.event)
+    if not raw_prices:
+        return {}
+    medians = {name: float(statistics.median(vals)) for name, vals in raw_prices.items()}
+    return proportional_devig(medians)
+
+
+def apply_goalscorer_probs(
+    roster: MatchRoster,
+    probs: dict[str, float],
+) -> tuple[MatchRoster, str]:
+    """Fill p_goal on roster from pre-fetched goalscorer probabilities."""
+    if not probs:
+        return roster, "goalscorer: mercato vuoto per questa partita"
+
+    updated: list[PlayerBonus] = []
+    matched = 0
+    for player in roster.players:
+        p_goal = 0.0
+        for api_name, prob in probs.items():
+            if players_match(player.name, api_name):
+                p_goal = prob
+                matched += 1
+                break
+        updated.append(player.with_probs(p_goal=p_goal))
+
+    roster.players = updated
+    return roster, f"goalscorer API ({matched}/{len(roster.players)} matched)"
 
 
 def fetch_goalscorer_probabilities(
@@ -166,21 +210,29 @@ def attach_goal_probs(
     sport: str,
     region: str,
     force_refresh: bool = False,
+    goalscorer_probs: dict[str, float] | None = None,
+    event_player_props: dict[str, dict[str, float]] | None = None,
 ) -> tuple[MatchRoster, str]:
     """Fill missing P(gol): The Odds API, then Poisson solo se ancora vuoto."""
     notes: list[str] = []
     if not _needs_goal_fill(roster):
         return roster, "P(gol) gia da quote/scrape"
 
-    roster, bulk_note = attach_goalscorer_odds(
-        roster, sport=sport, region=region, force_refresh=force_refresh
-    )
+    if goalscorer_probs is not None:
+        roster, bulk_note = apply_goalscorer_probs(roster, goalscorer_probs)
+    else:
+        roster, bulk_note = attach_goalscorer_odds(
+            roster, sport=sport, region=region, force_refresh=force_refresh
+        )
     notes.append(bulk_note)
 
     if _needs_goal_fill(roster):
-        roster, props_note = attach_player_props_from_api(
-            roster, sport=sport, region=region, force_refresh=force_refresh
-        )
+        if event_player_props is not None:
+            roster, props_note = apply_event_player_props(roster, event_player_props)
+        else:
+            roster, props_note = attach_player_props_from_api(
+                roster, sport=sport, region=region, force_refresh=force_refresh
+            )
         if props_note:
             notes.append(props_note)
 
@@ -218,27 +270,39 @@ def attach_all_player_probs(
     sport: str,
     region: str,
     force_refresh: bool = False,
+    use_oddspapi: bool = True,
+    use_scrape: bool = True,
+    oddspapi_props: tuple[dict[str, float], dict[str, float], str] | None = None,
+    sofa_props: tuple | None = None,
+    goalscorer_probs: dict[str, float] | None = None,
+    event_player_props: dict[str, dict[str, float]] | None = None,
 ) -> tuple[MatchRoster, str]:
     """Attach player probs: OddsPapi + SofaScore scrape, API, rigoristi, malus."""
-    if is_fast_mode():
-        roster = attach_poisson_goal_estimates(roster, match)
-        roster = attach_clean_sheet_probs(roster, match)
-        roster = attach_event_probs(roster, match)
-        return roster, "P(gol) Poisson — modalità veloce Render"
-
     notes: list[str] = []
     kickoff = roster.kickoff or getattr(match, "kickoff", None)
 
-    roster, oddspapi_note = attach_oddspapi_player_props(roster, kickoff)
-    if oddspapi_note:
-        notes.append(oddspapi_note)
+    if use_oddspapi:
+        roster, oddspapi_note = attach_oddspapi_player_props(
+            roster, kickoff, prefetched=oddspapi_props
+        )
+        if oddspapi_note:
+            notes.append(oddspapi_note)
 
-    roster, sofa_note = attach_sofascore_player_probs(roster, kickoff)
-    if sofa_note:
-        notes.append(sofa_note)
+    if use_scrape:
+        roster, sofa_note = attach_sofascore_player_probs(
+            roster, kickoff, prefetched=sofa_props
+        )
+        if sofa_note:
+            notes.append(sofa_note)
 
     roster, goal_note = attach_goal_probs(
-        roster, match, sport=sport, region=region, force_refresh=force_refresh
+        roster,
+        match,
+        sport=sport,
+        region=region,
+        force_refresh=force_refresh,
+        goalscorer_probs=goalscorer_probs,
+        event_player_props=event_player_props,
     )
     notes.append(goal_note)
 

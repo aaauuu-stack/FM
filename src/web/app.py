@@ -12,7 +12,8 @@ import time
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
 
-from odds.api_client import get_api_key, load_env_file
+from odds.api_client import get_api_key, load_env_file, _project_root
+from odds.memory_cache import warm_all_caches
 from players.screen_parse import roster_from_screenshots
 from predict.analyze import analyze_match_from_roster
 from web.html_render import render_analysis
@@ -145,9 +146,9 @@ def _form_html(
     error: str = "",
 ) -> str:
     if no_scrape is None:
-        no_scrape = IS_RENDER
+        no_scrape = False
     if no_oddspapi is None:
-        no_oddspapi = IS_RENDER
+        no_oddspapi = False
     err = f'<div class="error">{_esc(error)}</div>' if error else ""
     return f"""
 {err}
@@ -159,7 +160,7 @@ def _form_html(
     Carica 1–5 screen dall'app Fantamondiale: header partita (es. Uzbekistan – Colombia)
     e liste giocatori con bonus. Casa, ospite e vice vengono rilevati da soli.
   </p>
-  {"<p class='upload-hint'>Analisi ~15–30 sec su cloud. Non chiudere la pagina.</p>" if IS_RENDER else ""}
+  {"<p class='upload-hint'>Analisi ~30–90 sec su cloud (tutte le fonti). Non chiudere la pagina.</p>" if IS_RENDER else ""}
   <div class="checks">
     <label><input type="checkbox" name="refresh" value="1"{" checked" if refresh else ""}> Refresh quote (API live)</label>
     <label><input type="checkbox" name="no_oddspapi" value="1"{" checked" if no_oddspapi else ""}> Salta OddsPapi</label>
@@ -172,7 +173,7 @@ def _form_html(
 document.querySelector('form').addEventListener('submit', function() {
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
-  btn.textContent = 'Analisi in corso (15–40 sec)…';
+  btn.textContent = 'Analisi in corso (30–90 sec)…';
 });
 </script>
 """
@@ -182,6 +183,9 @@ document.querySelector('form').addEventListener('submit', function() {
 def _startup() -> None:
     load_env_file()
     logging.basicConfig(level=logging.INFO)
+    warmed = warm_all_caches(_project_root())
+    if warmed:
+        logger.info("Cache in memoria: %d file da disco", warmed)
 
 
 def _run_analysis(
@@ -230,10 +234,10 @@ async def predict(
     no_scrape: str = Form(""),
 ) -> HTMLResponse:
     do_refresh = refresh == "1"
-    use_oddspapi = no_oddspapi != "1" and not IS_RENDER
-    use_scrape = no_scrape != "1" and not IS_RENDER
-    skip_scrape_checked = no_scrape == "1" or IS_RENDER
-    skip_oddspapi_checked = no_oddspapi == "1" or IS_RENDER
+    use_oddspapi = no_oddspapi != "1"
+    use_scrape = no_scrape != "1"
+    skip_scrape_checked = no_scrape == "1"
+    skip_oddspapi_checked = no_oddspapi == "1"
 
     try:
         get_api_key()
@@ -265,13 +269,13 @@ async def predict(
                 use_oddspapi=use_oddspapi,
                 use_scrape=use_scrape,
             ),
-            timeout=120.0,
+            timeout=180.0,
         )
     except TimeoutError:
         return HTMLResponse(
             _page(
                 _form_html(
-                    error="Analisi troppo lenta (>2 min). Riprova con 1–2 screenshot nitidi, senza Refresh.",
+                    error="Analisi troppo lenta (>3 min). Riprova con 1–2 screenshot nitidi, senza Refresh.",
                     refresh=do_refresh,
                     no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,

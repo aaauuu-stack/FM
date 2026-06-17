@@ -13,6 +13,7 @@ from typing import Any
 
 from odds.api_client import _project_root
 from odds.fast_mode import http_timeout
+from odds.memory_cache import mem_get, mem_set
 
 DEFAULT_CACHE_TTL = 3 * 3600
 BROWSER_HEADERS = {
@@ -78,7 +79,12 @@ def fetch_json(
     extra_headers: dict[str, str] | None = None,
 ) -> ScrapeFetchResult:
     cache_file = _cache_dir() / cache_name
-    cached = _read_cache(cache_file, ttl)
+    mem_key = str(cache_file.resolve())
+    cached = mem_get(mem_key, ttl)
+    if cached is None:
+        cached = _read_cache(cache_file, ttl)
+        if cached is not None:
+            mem_set(mem_key, cached)
     if cached is not None:
         return ScrapeFetchResult(data=cached, from_cache=True)
 
@@ -95,6 +101,7 @@ def fetch_json(
 
     data = json.loads(raw.decode("utf-8"))
     _write_cache(cache_file, data)
+    mem_set(mem_key, data)
     return ScrapeFetchResult(data=data, from_cache=False)
 
 
@@ -106,7 +113,12 @@ def fetch_text(
     extra_headers: dict[str, str] | None = None,
 ) -> ScrapeFetchResult:
     cache_file = _cache_dir() / cache_name
-    cached = _read_cache(cache_file, ttl)
+    mem_key = str(cache_file.resolve())
+    cached = mem_get(mem_key, ttl)
+    if cached is None:
+        cached = _read_cache(cache_file, ttl)
+        if cached is not None:
+            mem_set(mem_key, cached)
     if cached is not None:
         return ScrapeFetchResult(data=cached, from_cache=True)
 
@@ -118,4 +130,5 @@ def fetch_text(
 
     text = raw.decode("utf-8", errors="replace")
     _write_cache(cache_file, text)
+    mem_set(mem_key, text)
     return ScrapeFetchResult(data=text, from_cache=False)

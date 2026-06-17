@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from odds.fast_mode import http_timeout
+from odds.memory_cache import mem_get, mem_set
 
 DEFAULT_BASE_URL = "https://api.the-odds-api.com/v4"
 DEFAULT_SPORT = "soccer_fifa_world_cup"
@@ -104,8 +105,13 @@ def fetch_odds(
     key = api_key or get_api_key()
     cache_file = _cache_path(sport, region, markets)
 
+    mem_key = str(cache_file.resolve())
     if not force_refresh:
-        cached = _read_cache(cache_file, cache_ttl_seconds)
+        cached = mem_get(mem_key, cache_ttl_seconds)
+        if cached is None:
+            cached = _read_cache(cache_file, cache_ttl_seconds)
+            if cached is not None:
+                mem_set(mem_key, cached)
         if cached is not None:
             remaining = None
             if cache_file.exists():
@@ -145,6 +151,7 @@ def fetch_odds(
         raise RuntimeError("Unexpected Odds API response (expected a list of events)")
 
     _write_cache(cache_file, events, headers)
+    mem_set(mem_key, events)
 
     return FetchResult(
         events=events,
@@ -185,8 +192,13 @@ def fetch_event_odds(
     key = api_key or get_api_key()
     cache_file = _event_cache_path(event_id, region, markets)
 
+    mem_key = str(cache_file.resolve())
     if not force_refresh:
-        cached = _read_cache(cache_file, cache_ttl_seconds)
+        cached = mem_get(mem_key, cache_ttl_seconds)
+        if cached is None:
+            cached = _read_cache(cache_file, cache_ttl_seconds)
+            if cached is not None:
+                mem_set(mem_key, cached)
         if cached is not None and cached:
             event = cached[0] if isinstance(cached, list) else cached
             remaining = None
@@ -226,6 +238,7 @@ def fetch_event_odds(
         raise RuntimeError("Unexpected Odds API event-odds response")
 
     _write_cache(cache_file, [event], headers)
+    mem_set(mem_key, [event])
 
     return EventOddsResult(
         event=event,

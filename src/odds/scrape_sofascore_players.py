@@ -201,11 +201,16 @@ def fetch_sofascore_player_props(
 def attach_sofascore_player_probs(
     roster: MatchRoster,
     kickoff_iso: str | None = None,
+    *,
+    prefetched: tuple | None = None,
 ) -> tuple[MatchRoster, str]:
     """Merge SofaScore odds + scraped NT stats into roster (no Poisson)."""
-    goal_odds, card_odds, stats, note = fetch_sofascore_player_props(
-        roster.home, roster.away, kickoff_iso
-    )
+    if prefetched is not None:
+        goal_odds, card_odds, stats, note = prefetched
+    else:
+        goal_odds, card_odds, stats, note = fetch_sofascore_player_props(
+            roster.home, roster.away, kickoff_iso
+        )
 
     g_hit = c_hit = s_hit = 0
     updated: list[PlayerBonus] = []

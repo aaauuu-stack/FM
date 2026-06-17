@@ -39,6 +39,49 @@ def _collect_yes_prices(event: dict[str, Any], market_key: str) -> dict[str, lis
     return prices
 
 
+def _devig_props(raw: dict[str, list[float]]) -> dict[str, float]:
+    if not raw:
+        return {}
+    medians = {name: float(statistics.median(vals)) for name, vals in raw.items()}
+    return proportional_devig(medians)
+
+
+def _parse_event_player_props(payload: dict[str, Any]) -> dict[str, dict[str, float]] | None:
+    goal_raw = _collect_yes_prices(payload, GOAL_MARKET)
+    card_raw = _collect_yes_prices(payload, CARD_MARKET)
+    red_raw = _collect_yes_prices(payload, RED_CARD_MARKET)
+
+    if not goal_raw and not card_raw and not red_raw:
+        return None
+
+    return {
+        "goal": _devig_props(goal_raw),
+        "card": _devig_props(card_raw),
+        "red": _devig_props(red_raw),
+    }
+
+
+def fetch_event_player_props_by_id(
+    event_id: str,
+    *,
+    sport: str,
+    region: str,
+    force_refresh: bool = False,
+) -> dict[str, dict[str, float]] | None:
+    """Fetch per-event player props using a known event id (no extra listing call)."""
+    try:
+        result = fetch_event_odds(
+            event_id,
+            sport=sport,
+            region=region,
+            markets=PLAYER_PROP_MARKETS,
+            force_refresh=force_refresh,
+        )
+        return _parse_event_player_props(result.event)
+    except RuntimeError:
+        return None
+
+
 def _fetch_event_player_props(
     home_query: str,
     away_query: str,
@@ -71,41 +114,14 @@ def _fetch_event_player_props(
     except (RuntimeError, ValueError):
         return None
 
-    goal_raw = _collect_yes_prices(payload, GOAL_MARKET)
-    card_raw = _collect_yes_prices(payload, CARD_MARKET)
-    red_raw = _collect_yes_prices(payload, RED_CARD_MARKET)
-
-    if not goal_raw and not card_raw and not red_raw:
-        return None
-
-    def _devig(raw: dict[str, list[float]]) -> dict[str, float]:
-        if not raw:
-            return {}
-        medians = {name: float(statistics.median(vals)) for name, vals in raw.items()}
-        return proportional_devig(medians)
-
-    return {
-        "goal": _devig(goal_raw),
-        "card": _devig(card_raw),
-        "red": _devig(red_raw),
-    }
+    return _parse_event_player_props(payload)
 
 
-def attach_player_props_from_api(
+def apply_event_player_props(
     roster: MatchRoster,
-    *,
-    sport: str,
-    region: str,
-    force_refresh: bool = False,
+    props: dict[str, dict[str, float]],
 ) -> tuple[MatchRoster, str]:
-    """Merge per-event player props when bookmakers expose them."""
-    props = _fetch_event_player_props(
-        roster.home,
-        roster.away,
-        sport=sport,
-        region=region,
-        force_refresh=force_refresh,
-    )
+    """Merge pre-fetched per-event player props into roster."""
     if not props:
         return roster, ""
 
@@ -141,3 +157,24 @@ def attach_player_props_from_api(
     if not parts:
         return roster, "props API: mercato vuoto"
     return roster, "props API (" + ", ".join(parts) + ")"
+
+
+def attach_player_props_from_api(
+    roster: MatchRoster,
+    *,
+    sport: str,
+    region: str,
+    force_refresh: bool = False,
+) -> tuple[MatchRoster, str]:
+    """Merge per-event player props when bookmakers expose them."""
+    props = _fetch_event_player_props(
+        roster.home,
+        roster.away,
+        sport=sport,
+        region=region,
+        force_refresh=force_refresh,
+    )
+    if not props:
+        return roster, ""
+
+    return apply_event_player_props(roster, props)

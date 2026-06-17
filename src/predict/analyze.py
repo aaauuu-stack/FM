@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from cli.fetch_and_predict import _build_match_from_apis
-from odds.fast_mode import is_fast_mode
 from odds.goalscorer import attach_all_player_probs
 from players.models import MatchRoster
 from players.roster_loader import load_roster
 from predict.event_ev import recommend_first_card, recommend_first_sub
+from predict.prefetch import build_match_parallel
 from predict.ev_report import (
     EvReport,
     event_recommendation_to_report,
@@ -49,18 +48,14 @@ def _analyze_with_roster(
     use_scrape: bool = True,
     top_n: int = 5,
 ) -> MatchAnalysis:
-    fast = is_fast_mode()
-    match, source_note, remaining = _build_match_from_apis(
-        roster.home,
-        roster.away,
+    match, source_note, remaining, _event_id, prefetch = build_match_parallel(
+        roster,
         sport=sport,
         region=region,
         refresh=refresh,
-        use_oddspapi=use_oddspapi and not fast,
-        use_scrape=use_scrape and not fast,
+        use_oddspapi=use_oddspapi,
+        use_scrape=use_scrape,
     )
-    if fast and "modalità veloce" not in source_note:
-        source_note = f"{source_note} | modalità veloce"
 
     dist, ranked = rank_predictions(match, top_n=top_n)
     result_report: EvReport | None = None
@@ -78,11 +73,32 @@ def _analyze_with_roster(
         )
 
     roster, gs_note = attach_all_player_probs(
-        roster, match, sport=sport, region=region, force_refresh=refresh
+        roster,
+        match,
+        sport=sport,
+        region=region,
+        force_refresh=refresh,
+        use_oddspapi=use_oddspapi,
+        use_scrape=use_scrape,
+        oddspapi_props=prefetch.oddspapi_props if use_oddspapi else None,
+        sofa_props=prefetch.sofa_props if use_scrape else None,
+        goalscorer_probs=prefetch.goalscorer_probs,
+        event_player_props=prefetch.event_player_props,
     )
 
-    sub_rec = recommend_first_sub(roster, match)
-    card_rec = recommend_first_card(roster, match)
+    first_card = prefetch.first_card if (use_oddspapi or use_scrape) else None
+    book_probs = first_card[0] if first_card else None
+    book_note = first_card[1] if first_card else ""
+
+    sub_rec = recommend_first_sub(
+        roster, match, sub_profiles=prefetch.sub_profiles or None
+    )
+    card_rec = recommend_first_card(
+        roster,
+        match,
+        book_probs=book_probs,
+        book_note=book_note,
+    )
     sub_report = event_recommendation_to_report(sub_rec) if sub_rec else None
     card_report = event_recommendation_to_report(card_rec) if card_rec else None
 

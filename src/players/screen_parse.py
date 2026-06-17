@@ -8,7 +8,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from odds.api_normalize import TEAM_ALIASES, normalize_team
-from odds.fast_mode import is_fast_mode
 from players.models import MatchRoster, PlayerBonus
 from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
 
@@ -96,7 +95,7 @@ def _prepare_gray_image(data: bytes):
     image = ImageOps.exif_transpose(image)
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
-    max_side = 1200 if is_fast_mode() else 1600
+    max_side = 1600
     width, height = image.size
     if max(width, height) > max_side:
         scale = max_side / max(width, height)
@@ -119,7 +118,7 @@ def _ocr_region(gray, box, *, psm: int = 6) -> str:
         return pytesseract.image_to_string(crop, lang="eng", config=config)
 
 
-def ocr_image_bytes(data: bytes) -> str:
+def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     """OCR FM screenshot: header banner + left (home) + right (away) columns."""
     try:
         import pytesseract  # noqa: F401
@@ -139,7 +138,9 @@ def ocr_image_bytes(data: bytes) -> str:
     mid = width // 2
     gutter = max(8, width // 40)
 
-    header_text = _ocr_region(gray, (0, 0, width, header_h), psm=7)
+    header_text = (
+        _ocr_region(gray, (0, 0, width, header_h), psm=7) if include_header else ""
+    )
     home_col = _ocr_region(gray, (0, body_top, mid - gutter, height), psm=6)
     away_col = _ocr_region(gray, (mid + gutter, body_top, width, height), psm=6)
 
@@ -157,10 +158,18 @@ def ocr_images(images: list[bytes]) -> str:
         return ""
     workers = min(3, len(blobs))
     if workers <= 1:
-        parts = [ocr_image_bytes(b).strip() for b in blobs]
+        parts = [ocr_image_bytes(blobs[0], include_header=True).strip()]
+        if len(blobs) > 1:
+            parts.extend(
+                ocr_image_bytes(b, include_header=False).strip() for b in blobs[1:]
+            )
     else:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            parts = [t.strip() for t in pool.map(ocr_image_bytes, blobs)]
+            first = pool.submit(ocr_image_bytes, blobs[0], include_header=True)
+            rest = [
+                pool.submit(ocr_image_bytes, b, include_header=False) for b in blobs[1:]
+            ]
+            parts = [first.result().strip()] + [f.result().strip() for f in rest]
     return "\n\n".join(p for p in parts if p)
 
 

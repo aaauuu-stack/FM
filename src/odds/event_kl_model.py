@@ -15,7 +15,6 @@ from odds.oddspapi_player_props import extract_player_yes_probs
 from odds.scrape_client import fetch_json
 from odds.scrape_sofascore import _sofascore_event_id, _sofascore_headers
 from odds.scrape_sofascore_players import _choice_decimal
-from odds.fast_mode import is_fast_mode
 from odds.scrape_sofascore_subs import TeamSubProfile, fetch_team_sub_profile
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
@@ -117,6 +116,8 @@ def _player_historical_sub_weight(
 def estimate_first_sub_probs(
     roster: MatchRoster,
     match,
+    *,
+    sub_profiles: dict[str, TeamSubProfile] | None = None,
 ) -> tuple[dict[str, float], str]:
     """P(primo sostituito) among starters — storico NT + pattern CT + contesto."""
     ctx = build_match_context(match)
@@ -124,12 +125,9 @@ def estimate_first_sub_probs(
     if not starters:
         return {}, "K: nessun titolare"
 
-    profiles: dict[str, TeamSubProfile] = {}
+    profiles: dict[str, TeamSubProfile] = sub_profiles or {}
     notes: list[str] = []
-    if is_fast_mode():
-        profiles = {"home": TeamSubProfile(), "away": TeamSubProfile()}
-        notes.append("modalità veloce")
-    else:
+    if not sub_profiles:
         for side, team_name, opp in (
             ("home", roster.home, roster.away),
             ("away", roster.away, roster.home),
@@ -140,6 +138,11 @@ def estimate_first_sub_probs(
                 opponent=opp,
             )
             profiles[side] = prof
+            if prof.sample_matches:
+                notes.append(f"{team_name}: {prof.sample_matches}p")
+    else:
+        for side, team_name in (("home", roster.home), ("away", roster.away)):
+            prof = profiles.get(side, TeamSubProfile())
             if prof.sample_matches:
                 notes.append(f"{team_name}: {prof.sample_matches}p")
 
@@ -257,15 +260,16 @@ def _card_prob_for_player(player: PlayerBonus, roster: MatchRoster) -> float:
 def estimate_first_card_probs(
     roster: MatchRoster,
     match,
+    *,
+    book_probs: dict[str, float] | None = None,
+    book_note: str = "",
 ) -> tuple[dict[str, float], str]:
     """P(primo ammonito) — quote first booked + hazard model su P(cartellino)."""
     pool = [p for p in roster.players if p.starter]
     if not pool:
         return {}, "L: nessun titolare"
 
-    book_probs: dict[str, float] = {}
-    book_note = ""
-    if not is_fast_mode():
+    if book_probs is None:
         book_probs, book_note = fetch_first_card_bookmaker_probs(roster)
     matched_book = 0
     hazards: dict[str, float] = {}

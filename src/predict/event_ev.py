@@ -20,8 +20,13 @@ class EventRecommendation:
     source_note: str = ""
 
 
-def recommend_first_sub(roster: MatchRoster, match) -> EventRecommendation | None:
-    probs, note = estimate_first_sub_probs(roster, match)
+def recommend_first_sub(
+    roster: MatchRoster,
+    match,
+    *,
+    sub_profiles: dict | None = None,
+) -> EventRecommendation | None:
+    probs, note = estimate_first_sub_probs(roster, match, sub_profiles=sub_profiles)
     if not probs:
         return None
     best_name = max(probs, key=probs.get)
@@ -37,8 +42,19 @@ def recommend_first_sub(roster: MatchRoster, match) -> EventRecommendation | Non
     )
 
 
-def recommend_first_card(roster: MatchRoster, match) -> EventRecommendation | None:
-    probs, note = estimate_first_card_probs(roster, match)
+def recommend_first_card(
+    roster: MatchRoster,
+    match,
+    *,
+    book_probs: dict[str, float] | None = None,
+    book_note: str = "",
+) -> EventRecommendation | None:
+    probs, note = estimate_first_card_probs(
+        roster,
+        match,
+        book_probs=book_probs,
+        book_note=book_note,
+    )
     if not probs:
         return None
     best_name = max(probs, key=probs.get)
