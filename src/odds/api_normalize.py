@@ -66,6 +66,7 @@ TEAM_ALIASES: dict[str, str] = {
     "arabia saudita": "saudi arabia",
     "iran": "iran",
     "qatar": "qatar",
+    "uzbekistan": "uzbekistan",
     "tunisia": "tunisia",
     "egitto": "egypt",
     "algeria": "algeria",

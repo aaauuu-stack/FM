@@ -33,7 +33,8 @@ py -3 -m pip install -e ".[web]"
 py -3 -m cli.serve
 ```
 
-Apri **http://127.0.0.1:8765** — form con casa/ospite, roster salvato o YAML incollato.
+Apri **http://127.0.0.1:8765** — **carica gli screenshot FM** (partita + bonus giocatori). Casa, ospite, roster e vice vengono letti in automatico (OCR). Non serve digitare la partita a mano.
+
 Usa cache di default; spunta **Refresh quote** solo quando vuoi chiamate API live.
 
 **Deploy online (link pubblico):** vedi [docs/DEPLOY.md](docs/DEPLOY.md) — Render gratuito o Railway; Supabase non ospita FastAPI Python.

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from cli.fetch_and_predict import _build_match_from_apis
 from odds.goalscorer import attach_all_player_probs
+from players.models import MatchRoster
 from players.roster_loader import load_roster
 from predict.event_ev import recommend_first_card, recommend_first_sub
 from predict.ev_report import (
@@ -37,10 +38,8 @@ class MatchAnalysis:
     warnings: list[str] = field(default_factory=list)
 
 
-def analyze_match(
-    home: str,
-    away: str,
-    roster_path: str,
+def _analyze_with_roster(
+    roster: MatchRoster,
     *,
     sport: str = "soccer_fifa_world_cup",
     region: str = "eu",
@@ -49,10 +48,9 @@ def analyze_match(
     use_scrape: bool = True,
     top_n: int = 5,
 ) -> MatchAnalysis:
-    roster = load_roster(roster_path)
     match, source_note, remaining = _build_match_from_apis(
-        home,
-        away,
+        roster.home,
+        roster.away,
         sport=sport,
         region=region,
         refresh=refresh,
@@ -113,6 +111,52 @@ def analyze_match(
         vice_name=vice.name if vice else None,
         vice_bonus=vice.bonus_goal if vice else None,
         top_players=top_players,
+    )
+
+
+def analyze_match(
+    home: str,
+    away: str,
+    roster_path: str,
+    *,
+    sport: str = "soccer_fifa_world_cup",
+    region: str = "eu",
+    refresh: bool = False,
+    use_oddspapi: bool = True,
+    use_scrape: bool = True,
+    top_n: int = 5,
+) -> MatchAnalysis:
+    roster = load_roster(roster_path)
+    return _analyze_with_roster(
+        roster,
+        sport=sport,
+        region=region,
+        refresh=refresh,
+        use_oddspapi=use_oddspapi,
+        use_scrape=use_scrape,
+        top_n=top_n,
+    )
+
+
+def analyze_match_from_roster(
+    roster: MatchRoster,
+    *,
+    sport: str = "soccer_fifa_world_cup",
+    region: str = "eu",
+    refresh: bool = False,
+    use_oddspapi: bool = True,
+    use_scrape: bool = True,
+    top_n: int = 5,
+) -> MatchAnalysis:
+    """Analyze using roster parsed from FM screenshots."""
+    return _analyze_with_roster(
+        roster,
+        sport=sport,
+        region=region,
+        refresh=refresh,
+        use_oddspapi=use_oddspapi,
+        use_scrape=use_scrape,
+        top_n=top_n,
     )
 
 

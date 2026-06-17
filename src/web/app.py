@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
+import html
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
 
 from odds.api_client import get_api_key, load_env_file
-from predict.analyze import analyze_match, analyze_match_from_yaml
+from players.screen_parse import roster_from_screenshots
+from predict.analyze import analyze_match_from_roster
 from web.html_render import render_analysis
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PLAYERS_DIR = PROJECT_ROOT / "data" / "players"
 
 app = FastAPI(title="Fantamondiale 2026", docs_url=None, redoc_url=None)
 
@@ -48,16 +47,15 @@ form {
   gap: 1rem;
 }
 label { display: grid; gap: 0.35rem; font-size: 0.9rem; }
-input[type=text], select, textarea {
+input[type=file] {
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px dashed var(--border);
   border-radius: 8px;
   color: var(--text);
-  padding: 0.55rem 0.75rem;
+  padding: 1rem;
   font: inherit;
 }
-textarea { min-height: 140px; font-family: ui-monospace, monospace; font-size: 0.85rem; }
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.upload-hint { color: var(--muted); font-size: 0.85rem; margin: 0; }
 .checks { display: flex; flex-wrap: wrap; gap: 1rem; }
 .checks label { display: flex; align-items: center; gap: 0.4rem; }
 button {
@@ -79,6 +77,15 @@ button:hover { filter: brightness(1.08); }
   border-radius: 8px;
   margin-bottom: 1rem;
 }
+.info {
+  background: #1e293b;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.85rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
 .report, .analysis > section {
   background: var(--card);
   border: 1px solid var(--border);
@@ -96,15 +103,11 @@ th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var
 th { color: var(--muted); font-weight: 500; }
 .alts, .analysis ul { color: var(--muted); font-size: 0.9rem; }
 .baseline { color: var(--muted); font-size: 0.88rem; }
-.roster-toggle { font-size: 0.85rem; color: var(--accent); cursor: pointer; }
-@media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
 """
 
 
-def _list_rosters() -> list[str]:
-    if not PLAYERS_DIR.is_dir():
-        return []
-    return sorted(p.name for p in PLAYERS_DIR.glob("*.yaml"))
+def _esc(text: str) -> str:
+    return html.escape(str(text))
 
 
 def _page(body: str, title: str = "Fantamondiale 2026") -> str:
@@ -113,14 +116,14 @@ def _page(body: str, title: str = "Fantamondiale 2026") -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title}</title>
+  <title>{_esc(title)}</title>
   <style>{PAGE_CSS}</style>
 </head>
 <body>
   <div class="wrap">
     <header>
       <h1>Fantamondiale 2026 — Optimizer</h1>
-      <p>Risultato H/I/J · Formazione 4+vice · Eventi K/L · una partita alla volta</p>
+      <p>Carica gli screenshot FM · partita e roster letti in automatico</p>
     </header>
     {body}
   </div>
@@ -130,46 +133,22 @@ def _page(body: str, title: str = "Fantamondiale 2026") -> str:
 
 def _form_html(
     *,
-    home: str = "Inghilterra",
-    away: str = "Croazia",
-    roster: str = "",
-    roster_yaml: str = "",
     refresh: bool = False,
     no_oddspapi: bool = False,
     no_scrape: bool = False,
+    error: str = "",
 ) -> str:
-    rosters = _list_rosters()
-    default_roster = roster or (rosters[0] if rosters else "")
-    options = "".join(
-        f'<option value="{r}"{" selected" if r == default_roster else ""}>{r}</option>'
-        for r in rosters
-    )
-    roster_block = ""
-    if roster_yaml:
-        roster_block = f"""
-<label>Roster YAML (incolla dallo screenshot)
-  <textarea name="roster_yaml" placeholder="home: Inghilterra&#10;away: Croazia&#10;players: ...">{roster_yaml}</textarea>
-</label>
-"""
-    else:
-        roster_block = f"""
-<label>Roster salvato
-  <select name="roster">{options}</select>
-</label>
-<p class="meta"><a href="/?paste=1">Oppure incolla YAML</a></p>
-"""
-
+    err = f'<div class="error">{_esc(error)}</div>' if error else ""
     return f"""
-<form method="post" action="/predict">
-  <div class="row">
-    <label>Casa
-      <input type="text" name="home" value="{home}" required>
-    </label>
-    <label>Ospite
-      <input type="text" name="away" value="{away}" required>
-    </label>
-  </div>
-  {roster_block}
+{err}
+<form method="post" action="/predict" enctype="multipart/form-data">
+  <label>Screenshot FM (partita + bonus giocatori)
+    <input type="file" name="screenshots" accept="image/*" multiple required>
+  </label>
+  <p class="upload-hint">
+    Carica 1–5 screen dall'app Fantamondiale: header partita (es. Uzbekistan – Colombia)
+    e liste giocatori con bonus. Casa, ospite e vice vengono rilevati da soli.
+  </p>
   <div class="checks">
     <label><input type="checkbox" name="refresh" value="1"{" checked" if refresh else ""}> Refresh quote (API live)</label>
     <label><input type="checkbox" name="no_oddspapi" value="1"{" checked" if no_oddspapi else ""}> Salta OddsPapi</label>
@@ -187,18 +166,13 @@ def _startup() -> None:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request) -> HTMLResponse:
-    paste = request.query_params.get("paste") == "1"
-    body = _form_html(roster_yaml=" " if paste else "")
-    return HTMLResponse(_page(body))
+async def index() -> HTMLResponse:
+    return HTMLResponse(_page(_form_html()))
 
 
 @app.post("/predict", response_class=HTMLResponse)
 async def predict(
-    home: str = Form(...),
-    away: str = Form(...),
-    roster: str = Form(""),
-    roster_yaml: str = Form(""),
+    screenshots: list[UploadFile] = File(...),
     refresh: str = Form(""),
     no_oddspapi: str = Form(""),
     no_scrape: str = Form(""),
@@ -206,46 +180,38 @@ async def predict(
     do_refresh = refresh == "1"
     use_oddspapi = no_oddspapi != "1"
     use_scrape = no_scrape != "1"
-    yaml_text = roster_yaml.strip()
 
     try:
         get_api_key()
     except RuntimeError as exc:
-        err = f'<div class="error">{exc}</div>'
-        return HTMLResponse(_page(err + _form_html(home=home, away=away, roster=roster)))
+        return HTMLResponse(_page(_form_html(error=str(exc))))
+
+    blobs: list[bytes] = []
+    for upload in screenshots:
+        if not upload.filename:
+            continue
+        data = await upload.read()
+        if data:
+            blobs.append(data)
+
+    if not blobs:
+        return HTMLResponse(
+            _page(_form_html(error="Nessuna immagine caricata.", refresh=do_refresh))
+        )
 
     try:
-        if yaml_text:
-            analysis = analyze_match_from_yaml(
-                home,
-                away,
-                yaml_text,
-                refresh=do_refresh,
-                use_oddspapi=use_oddspapi,
-                use_scrape=use_scrape,
-            )
-        else:
-            roster_path = str(PLAYERS_DIR / roster)
-            if not Path(roster_path).is_file():
-                raise ValueError(f"Roster non trovato: {roster}")
-            analysis = analyze_match(
-                home,
-                away,
-                roster_path,
-                refresh=do_refresh,
-                use_oddspapi=use_oddspapi,
-                use_scrape=use_scrape,
-            )
-    except ValueError as exc:
-        err = f'<div class="error">{exc}</div>'
+        roster = roster_from_screenshots(blobs)
+        analysis = analyze_match_from_roster(
+            roster,
+            refresh=do_refresh,
+            use_oddspapi=use_oddspapi,
+            use_scrape=use_scrape,
+        )
+    except (ValueError, RuntimeError) as exc:
         return HTMLResponse(
             _page(
-                err
-                + _form_html(
-                    home=home,
-                    away=away,
-                    roster=roster,
-                    roster_yaml=yaml_text,
+                _form_html(
+                    error=str(exc),
                     refresh=do_refresh,
                     no_oddspapi=not use_oddspapi,
                     no_scrape=not use_scrape,
@@ -253,17 +219,24 @@ async def predict(
             )
         )
 
-    result_html = render_analysis(analysis)
+    detected = (
+        f'<div class="info">Letto dagli screenshot: '
+        f"<strong>{_esc(analysis.home)}</strong> vs "
+        f"<strong>{_esc(analysis.away)}</strong>"
+    )
+    if analysis.vice_name:
+        detected += f" · Vice: {_esc(analysis.vice_name)} (+{analysis.vice_bonus})"
+    detected += "</div>"
+
+    result_html = detected + render_analysis(analysis)
     back = _form_html(
-        home=home,
-        away=away,
-        roster=roster,
-        roster_yaml=yaml_text,
         refresh=do_refresh,
         no_oddspapi=not use_oddspapi,
         no_scrape=not use_scrape,
     )
-    return HTMLResponse(_page(result_html + back, title=f"{home} vs {away}"))
+    return HTMLResponse(
+        _page(result_html + back, title=f"{analysis.home} vs {analysis.away}")
+    )
 
 
 def main() -> int:
