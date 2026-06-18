@@ -98,6 +98,7 @@ def attach_oddspapi_player_props(
     kickoff_iso: str | None = None,
     *,
     prefetched: tuple[dict[str, float], dict[str, float], str] | None = None,
+    starters_only: bool = False,
 ) -> tuple[MatchRoster, str]:
     """Merge OddsPapi bookmaker player props into roster."""
     if prefetched is not None:
@@ -112,6 +113,9 @@ def attach_oddspapi_player_props(
     g_hit = c_hit = 0
     updated: list[PlayerBonus] = []
     for player in roster.players:
+        if starters_only and not player.starter:
+            updated.append(player)
+            continue
         kwargs: dict[str, float] = {}
         goal_hit = player.book_goal_matched
         card_hit = player.book_card_matched

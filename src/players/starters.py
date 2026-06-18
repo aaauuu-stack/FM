@@ -9,8 +9,9 @@ from odds.sofascore_event_lookup import min_sofa_xi_per_side
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
 
-# Typical NT shape when we must guess (no lineups / sparse quotes)
-_ROLE_SLOTS: dict[str, int] = {"GK": 1, "DEF": 4, "MID": 4, "FWD": 2}
+# Typical NT shape when we must guess outfield (no lineups / sparse quotes).
+# GK titolari: solo da SofaScore — mai euristica (evita Keller vs Kobel).
+_ROLE_SLOTS: dict[str, int] = {"DEF": 4, "MID": 4, "FWD": 2}
 
 
 def _matches_any(fm_name: str, api_names: set[str]) -> bool:
@@ -35,13 +36,18 @@ def _pick_one_gk(gks: list[PlayerBonus]) -> PlayerBonus | None:
 
 
 def _consolidate_gk_starters(players: list[PlayerBonus]) -> None:
-    """Exactly one starting GK per side."""
+    """Exactly one starting GK per side (only when SofaScore marked at least one)."""
     for side in ("home", "away"):
         gks = [p for p in players if p.is_goalkeeper and p.side == side]
         if not gks:
             continue
         starters = [p for p in gks if p.starter]
-        pick = _pick_one_gk(starters if starters else gks)
+        if not starters:
+            for p in gks:
+                idx = players.index(p)
+                players[idx] = replace(p, starter=False)
+            continue
+        pick = _pick_one_gk(starters)
         if not pick:
             continue
         for p in gks:

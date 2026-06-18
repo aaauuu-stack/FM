@@ -122,6 +122,8 @@ def _fetch_event_player_props(
 def apply_event_player_props(
     roster: MatchRoster,
     props: dict[str, dict[str, float]],
+    *,
+    starters_only: bool = False,
 ) -> tuple[MatchRoster, str]:
     """Merge pre-fetched per-event player props into roster."""
     if not props:
@@ -130,6 +132,9 @@ def apply_event_player_props(
     g_matched = c_matched = r_matched = 0
     updated: list[PlayerBonus] = []
     for player in roster.players:
+        if starters_only and not player.starter:
+            updated.append(player)
+            continue
         kwargs: dict[str, float] = {}
         goal_hit = player.book_goal_matched
         card_hit = player.book_card_matched

@@ -22,13 +22,31 @@ def _swiss_bosnia_roster() -> MatchRoster:
     return MatchRoster(match_id="SUI-BIH", home="Svizzera", away="Bosnia", players=players)
 
 
-def test_resolve_starters_one_gk_per_team():
-    roster = resolve_starters(_swiss_bosnia_roster())
+def test_resolve_starters_one_gk_per_team_with_sofa():
+    from unittest.mock import patch
+
+    from players.starters import infer_starters
+
+    sofa_home = {"Kobel", "G. Kobel", "Embolo", "Akanji", "Xhaka"}
+    sofa_away = {"Vasilj", "N. Vasilj", "Dzeko", "Dedic", "Katic"}
+    with patch(
+        "players.starters.fetch_event_starter_names",
+        return_value=(sofa_home, sofa_away, "lineups SofaScore"),
+    ):
+        roster, _ = infer_starters(_swiss_bosnia_roster(), sofascore_event_id=1)
     home_gks = [p for p in roster.home_players() if p.is_goalkeeper]
     assert sum(1 for p in home_gks if p.starter) == 1
-    assert sum(1 for p in home_gks if not p.starter) == 2
+    assert next(p for p in home_gks if p.starter).name == "Kobel"
     away_gks = [p for p in roster.away_players() if p.is_goalkeeper]
     assert sum(1 for p in away_gks if p.starter) == 1
+    assert next(p for p in away_gks if p.starter).name == "Vasilj"
+
+
+def test_no_heuristic_gk_without_sofa():
+    """Senza SofaScore non indoviniamo il portiere (evita Keller)."""
+    roster = resolve_starters(_swiss_bosnia_roster())
+    home_gks = [p for p in roster.home_players() if p.is_goalkeeper]
+    assert sum(1 for p in home_gks if p.starter) == 0
 
 
 def test_lineup_never_picks_three_gks():
@@ -71,9 +89,7 @@ def test_bench_gk_zero_ev_even_with_book_goal_quote():
             player.p_clean_sheet = 0.5
     roster = apply_starter_probabilities(roster)
     keller = next(p for p in roster.players if p.name == "Keller")
-    kobel = next(p for p in roster.players if p.name == "Kobel")
     assert not keller.starter
-    assert kobel.starter
     assert float(keller.p_goal or 0) == 0.0
     assert float(keller.p_clean_sheet or 0) == 0.0
     assert "Keller" not in {p.name for p in roster.lineup_pool()}

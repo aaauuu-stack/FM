@@ -41,6 +41,8 @@ def _collect_goalscorer_prices(event: dict[str, Any]) -> dict[str, list[float]]:
 def apply_goalscorer_probs(
     roster: MatchRoster,
     probs: dict[str, float],
+    *,
+    starters_only: bool = False,
 ) -> tuple[MatchRoster, str]:
     """Fill p_goal on roster from pre-fetched goalscorer probabilities."""
     if not probs:
@@ -49,6 +51,9 @@ def apply_goalscorer_probs(
     updated: list[PlayerBonus] = []
     matched = 0
     for player in roster.players:
+        if starters_only and not player.starter:
+            updated.append(player)
+            continue
         p_goal = 0.0
         hit = False
         for api_name, prob in probs.items():
@@ -185,10 +190,13 @@ def attach_poisson_goal_estimates(
     return roster
 
 
-def _roster_needs_goal_fill(roster: MatchRoster) -> bool:
+def _roster_needs_goal_fill(roster: MatchRoster, *, starters_only: bool = False) -> bool:
     """True if any outfield player still lacks P(gol)."""
     return any(
-        not p.is_goalkeeper and float(p.p_goal or 0.0) <= 0 for p in roster.players
+        not p.is_goalkeeper
+        and float(p.p_goal or 0.0) <= 0
+        and (p.starter or not starters_only)
+        for p in roster.players
     )
 
 
@@ -204,6 +212,7 @@ def attach_goal_probs(
     use_poisson: bool = True,
     starters_only_poisson: bool = False,
     poisson_only: bool = False,
+    starters_only: bool = False,
 ) -> tuple[MatchRoster, str]:
     """Fill missing P(gol) per giocatore: API, poi Poisson solo sui vuoti."""
     notes: list[str] = []
@@ -221,18 +230,22 @@ def attach_goal_probs(
             notes.append(label)
         return roster, "; ".join(notes) if notes else ""
 
-    if _roster_needs_goal_fill(roster):
+    if _roster_needs_goal_fill(roster, starters_only=starters_only or starters_only_poisson):
         if goalscorer_probs is not None:
-            roster, bulk_note = apply_goalscorer_probs(roster, goalscorer_probs)
+            roster, bulk_note = apply_goalscorer_probs(
+                roster, goalscorer_probs, starters_only=starters_only
+            )
         else:
             roster, bulk_note = attach_goalscorer_odds(
                 roster, sport=sport, region=region, force_refresh=force_refresh
             )
         notes.append(bulk_note)
 
-    if _roster_needs_goal_fill(roster):
+    if _roster_needs_goal_fill(roster, starters_only=starters_only or starters_only_poisson):
         if event_player_props is not None:
-            roster, props_note = apply_event_player_props(roster, event_player_props)
+            roster, props_note = apply_event_player_props(
+                roster, event_player_props, starters_only=starters_only
+            )
         else:
             roster, props_note = attach_player_props_from_api(
                 roster, sport=sport, region=region, force_refresh=force_refresh
@@ -240,7 +253,9 @@ def attach_goal_probs(
         if props_note:
             notes.append(props_note)
 
-    if use_poisson and _roster_needs_goal_fill(roster):
+    if use_poisson and _roster_needs_goal_fill(
+        roster, starters_only=starters_only or starters_only_poisson
+    ):
         roster = attach_poisson_goal_estimates(
             roster, match, starters_only=starters_only_poisson
         )
@@ -252,7 +267,8 @@ def attach_goal_probs(
         notes.append(label)
 
     if not notes:
-        return roster, "P(gol) gia da quote/scrape per tutti"
+        suffix = " (solo titolari)" if starters_only else ""
+        return roster, f"P(gol) gia da quote/scrape per tutti{suffix}"
     return roster, "; ".join(notes)
 
 
@@ -294,6 +310,7 @@ def attach_all_player_probs(
     event_player_props: dict[str, dict[str, float]] | None = None,
     use_poisson: bool = True,
     starters_only_poisson: bool = False,
+    starters_only: bool = False,
 ) -> tuple[MatchRoster, str]:
     """Attach player probs: OddsPapi + SofaScore scrape, API, rigoristi, malus."""
     notes: list[str] = []
@@ -301,14 +318,14 @@ def attach_all_player_probs(
 
     if use_oddspapi:
         roster, oddspapi_note = attach_oddspapi_player_props(
-            roster, kickoff, prefetched=oddspapi_props
+            roster, kickoff, prefetched=oddspapi_props, starters_only=starters_only
         )
         if oddspapi_note:
             notes.append(oddspapi_note)
 
     if use_scrape:
         roster, sofa_note = attach_sofascore_player_probs(
-            roster, kickoff, prefetched=sofa_props
+            roster, kickoff, prefetched=sofa_props, starters_only=starters_only
         )
         if sofa_note:
             notes.append(sofa_note)
@@ -322,7 +339,8 @@ def attach_all_player_probs(
         goalscorer_probs=goalscorer_probs,
         event_player_props=event_player_props,
         use_poisson=use_poisson,
-        starters_only_poisson=starters_only_poisson,
+        starters_only_poisson=starters_only_poisson or starters_only,
+        starters_only=starters_only,
     )
     notes.append(goal_note)
 

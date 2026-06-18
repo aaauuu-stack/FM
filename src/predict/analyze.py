@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from odds.goalscorer import attach_all_player_probs, attach_clean_sheet_probs, attach_goal_probs
+from odds.goalscorer import attach_all_player_probs, attach_clean_sheet_probs
 from odds.scrape_sofascore_subs import TeamSubProfile
 from players.models import MatchRoster
 from players.roster_loader import load_roster
@@ -74,6 +74,10 @@ def _analyze_with_roster(
             top_n=top_n,
         )
 
+    roster, starter_note = infer_starters(
+        roster,
+        sofascore_event_id=prefetch.sofascore_event_id,
+    )
     roster, gs_note = attach_all_player_probs(
         roster,
         match,
@@ -86,29 +90,15 @@ def _analyze_with_roster(
         sofa_props=prefetch.sofa_props if use_scrape else None,
         goalscorer_probs=prefetch.goalscorer_probs,
         event_player_props=prefetch.event_player_props,
-        use_poisson=False,
-    )
-    roster, starter_note = infer_starters(
-        roster,
-        sofascore_event_id=prefetch.sofascore_event_id,
-    )
-    roster, poisson_note = attach_goal_probs(
-        roster,
-        match,
-        sport=sport,
-        region=region,
-        use_poisson=True,
+        starters_only=True,
         starters_only_poisson=True,
-        poisson_only=True,
     )
     roster = attach_clean_sheet_probs(roster, match)
     roster = apply_starter_probabilities(roster)
 
     player_note = gs_note
-    if poisson_note and "Poisson" in poisson_note:
-        player_note = f"{gs_note} | {poisson_note}"
     if starter_note:
-        player_note = f"{gs_note} | Titolari: {starter_note}"
+        player_note = f"Titolari: {starter_note} | {gs_note}"
 
     first_card = prefetch.first_card if (use_oddspapi or use_scrape) else None
     book_probs = first_card[0] if first_card else None
