@@ -10,7 +10,6 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from odds.fast_mode import http_timeout
 from players.models import MatchRoster, PlayerBonus
 from players.screen_parse import _default_match_id, _ensure_single_vice, _validate_roster_sides
 from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
@@ -185,15 +184,17 @@ def _call_openai_vision(images: list[bytes]) -> dict[str, Any]:
         },
         method="POST",
     )
-    timeout = http_timeout(60.0)
+    timeout = 90.0  # vision multi-immagine: non usare http_timeout (FM_FAST_MODE=10s)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"OpenAI vision HTTP {exc.code}: {detail[:300]}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"OpenAI vision request failed: {exc}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise RuntimeError(
+            f"OpenAI vision timeout/rete dopo {timeout:.0f}s: {exc}"
+        ) from exc
 
     choices = body.get("choices") or []
     if not choices:

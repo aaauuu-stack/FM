@@ -314,15 +314,23 @@ async def predict(
     except TimeoutError:
         diag = timing_summary()
         elapsed = elapsed_total()
+        if elapsed < 90:
+            msg = (
+                f"Timeout di rete dopo {elapsed:.0f}s. "
+                f"Dettaglio: {diag}. "
+                "Riprova tra poco; se persiste, incolla il testo roster."
+            )
+        else:
+            msg = (
+                f"Analisi troppo lenta ({elapsed:.0f}s, limite 5 min). "
+                f"Timing parziale: {diag}. "
+                "Se quote/API è lento: riprova senza Refresh. "
+                "In alternativa incolla il testo roster invece degli screenshot."
+            )
         return HTMLResponse(
             _page(
                 _form_html(
-                    error=(
-                        f"Analisi troppo lenta ({elapsed:.0f}s, limite 5 min). "
-                        f"Timing parziale: {diag}. "
-                        "Se quote/API è lento: riprova senza Refresh. "
-                        "In alternativa incolla il testo roster invece degli screenshot."
-                    ),
+                    error=msg,
                     refresh=do_refresh,
                     no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,

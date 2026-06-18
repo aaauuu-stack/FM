@@ -17,7 +17,7 @@ def is_fast_mode() -> bool:
 def http_timeout(default: float) -> float:
     """Slightly shorter timeouts on cloud to fail fast and retry from cache."""
     if is_fast_mode():
-        return min(default, 10.0)
+        return min(default, 25.0)
     if is_cloud_host():
-        return min(default, 12.0)
+        return min(default, 30.0)
     return default
