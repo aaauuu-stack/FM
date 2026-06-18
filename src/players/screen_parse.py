@@ -195,7 +195,7 @@ def _pick_banner_image_index(blobs: list[bytes]) -> int | None:
 
 
 def _prepare_banner_for_ocr(crop):
-    from PIL import ImageOps
+    from PIL import Image, ImageOps
 
     crop = ImageOps.autocontrast(crop)
     width, height = crop.size
