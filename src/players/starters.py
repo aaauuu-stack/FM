@@ -20,9 +20,17 @@ def _matches_any(fm_name: str, api_names: set[str]) -> bool:
 def _pick_one_gk(gks: list[PlayerBonus]) -> PlayerBonus | None:
     if not gks:
         return None
-    return max(
-        gks,
-        key=lambda p: (p.starter, p.bonus_clean_sheet, -p.bonus_goal),
+    starters = [p for p in gks if p.starter]
+    pool = starters if starters else gks
+    # FM: bonus più basso ≈ titolare; backup spesso ha quota anytime gol → ultimo criterio
+    return min(
+        pool,
+        key=lambda p: (
+            p.bonus_goal,
+            p.bonus_clean_sheet,
+            int(p.book_goal_matched),
+            p.name.lower(),
+        ),
     )
 
 
@@ -57,6 +65,11 @@ def _heuristic_xi(side_players: list[PlayerBonus]) -> set[str]:
         if need == 0:
             continue
         pool = [p for p in in_role if p.name not in chosen]
+        if role == "GK":
+            pick = _pick_one_gk(pool)
+            if pick:
+                chosen.add(pick.name)
+            continue
         pool.sort(key=lambda p: p.bonus_goal)
         for player in pool[:need]:
             chosen.add(player.name)
@@ -150,12 +163,30 @@ def apply_starter_probabilities(roster: MatchRoster) -> MatchRoster:
     """
     Zero event probabilities for non-starters without book quotes.
 
-    Bookmaker P(gol)/P(cartellino) already embed expected minutes and sub role.
-    SofaScore titolari are still used for GK clean sheet and Poisson fallback.
+    Bookmaker P(gol)/P(cartellino) embeds expected minutes for outfielders only.
+    Portieri: solo il titolare conserva probabilità (CS da quote partita).
     """
     updated: list[PlayerBonus] = []
     for player in roster.players:
-        if player.starter or player.has_book_quote:
+        if player.is_goalkeeper:
+            if player.starter:
+                updated.append(player)
+            else:
+                updated.append(
+                    player.with_probs(
+                        p_goal=0.0,
+                        p_gk_goal=0.0,
+                        p_penalty_scored=0.0,
+                        p_penalty_missed=0.0,
+                        p_penalty_saved=0.0,
+                        p_yellow=0.0,
+                        p_red=0.0,
+                        p_own_goal=0.0,
+                        p_clean_sheet=0.0,
+                    )
+                )
+            continue
+        if player.starter or player.book_quote_trusts_minutes:
             updated.append(player)
             continue
         updated.append(

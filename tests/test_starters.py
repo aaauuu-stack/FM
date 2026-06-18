@@ -56,6 +56,29 @@ def test_bench_gk_zero_ev():
     assert compute_player_ev(bench).ev_total == 0.0
 
 
+def test_bench_gk_zero_ev_even_with_book_goal_quote():
+    """Backup GK con quota gol book: non titolare, probabilità azzerate."""
+    from players.starters import apply_starter_probabilities, infer_starters
+
+    roster = _swiss_bosnia_roster()
+    for player in roster.players:
+        if player.name == "Keller":
+            player.book_goal_matched = True
+            player.p_goal = 0.02
+    roster, _ = infer_starters(roster)
+    for player in roster.players:
+        if player.starter and player.is_goalkeeper:
+            player.p_clean_sheet = 0.5
+    roster = apply_starter_probabilities(roster)
+    keller = next(p for p in roster.players if p.name == "Keller")
+    kobel = next(p for p in roster.players if p.name == "Kobel")
+    assert not keller.starter
+    assert kobel.starter
+    assert float(keller.p_goal or 0) == 0.0
+    assert float(keller.p_clean_sheet or 0) == 0.0
+    assert "Keller" not in {p.name for p in roster.lineup_pool()}
+
+
 def test_sofa_complete_lineup_excludes_backup_gk():
     """Con XI SofaScore completo, portiere backup (Keller) non è titolare."""
     from unittest.mock import patch

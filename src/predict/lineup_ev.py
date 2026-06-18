@@ -33,7 +33,7 @@ class LineupRecommendation:
 def rank_players(roster: MatchRoster, top_n: int = 10) -> list[PlayerEv]:
     pool = roster.lineup_pool()
     ranked = [compute_player_ev(p) for p in pool]
-    ranked.sort(key=lambda p: p.ev_total, reverse=True)
+    ranked.sort(key=lambda p: (-p.ev_total, p.player.name.lower()))
     return ranked[:top_n]
 
 
@@ -88,14 +88,17 @@ def optimize_lineup(
             f"e almeno {LINEUP_SIZE} totali (escluso vice)"
         )
 
-    candidates.sort(key=lambda c: c.ev_total, reverse=True)
+    candidates.sort(key=lambda c: (-c.ev_total, tuple(c.names)))
     return candidates[0], candidates[1 : 1 + top_alternatives]
 
 
 def naive_top_scorers_lineup(roster: MatchRoster) -> LineupRecommendation | None:
     """Baseline: top 4 by EV singolo, rispettando vincolo squadra."""
     pool = roster.lineup_pool()
-    by_ev = sorted(pool, key=lambda p: compute_player_ev(p).ev_total, reverse=True)
+    by_ev = sorted(
+        pool,
+        key=lambda p: (-compute_player_ev(p).ev_total, p.name.lower()),
+    )
     vice_player = roster.vice_player()
     vice_ev = compute_player_ev(vice_player) if vice_player else None
 
