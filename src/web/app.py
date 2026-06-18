@@ -17,7 +17,7 @@ from odds.memory_cache import warm_all_caches
 from odds.request_cache import clear_request_cache
 from players.screen_parse import roster_from_screenshots
 from predict.analyze import analyze_match_from_roster
-from predict.timing import reset_timings, timed, timing_summary
+from predict.timing import reset_timings, timed, timing_summary, elapsed_total
 from web.html_render import render_analysis
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ def _form_html(
     Almeno uno deve mostrare il banner partita in alto (es. Uzbekistan – Colombia);
     gli altri possono essere scroll con più giocatori.
   </p>
-  {"<p class='upload-hint'>Analisi ~30–90 sec su cloud. Meno screenshot = più veloce (OCR ~10–30s con 1–3 screen).</p>" if IS_RENDER else ""}
+  {"<p class='upload-hint'>Analisi ~30–90 sec su cloud. Usa 2–3 screenshot nitidi (banner + giocatori).</p>" if IS_RENDER else ""}
   <div class="checks">
     <label><input type="checkbox" name="refresh" value="1"{" checked" if refresh else ""}> Refresh quote (API live)</label>
     <label><input type="checkbox" name="no_oddspapi" value="1"{" checked" if no_oddspapi else ""}> Salta OddsPapi</label>
@@ -288,15 +288,15 @@ async def predict(
         )
     except TimeoutError:
         diag = timing_summary()
+        elapsed = elapsed_total()
         return HTMLResponse(
             _page(
                 _form_html(
                     error=(
-                        "Analisi troppo lenta (>5 min). "
+                        f"Analisi troppo lenta ({elapsed:.0f}s, limite 5 min). "
                         f"Timing parziale: {diag}. "
-                        "Se OCR è alto: usa 1 screenshot nitido. "
-                        "Se sofascore/oddspapi è alto: riprova senza Refresh "
-                        "(Render free tier, rete lenta verso SofaScore)."
+                        "Su cloud usa 2–3 screenshot nitidi (banner partita + scroll giocatori). "
+                        "Se quote/API è lento: riprova senza Refresh."
                     ),
                     refresh=do_refresh,
                     no_oddspapi=skip_oddspapi_checked,

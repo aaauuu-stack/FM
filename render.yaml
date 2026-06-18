@@ -10,6 +10,8 @@ services:
     envVars:
       - key: RENDER
         value: "true"
+      - key: FM_FAST_MODE
+        value: "1"
       - key: ODDS_API_KEY
         sync: false
       - key: ODDSPAPI_API_KEY

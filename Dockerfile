@@ -4,7 +4,8 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8765
+    PORT=8765 \
+    OMP_NUM_THREADS=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \

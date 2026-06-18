@@ -155,17 +155,24 @@ def test_pick_banner_image_index():
 def test_ocr_images_parallel_puts_banner_first():
     from unittest.mock import patch
 
+    from PIL import Image
+
     from players.screen_parse import ocr_images
 
     seen: list[bytes] = []
 
-    def _fake(data: bytes, *, include_header: bool = True) -> str:
+    def _fake(data: bytes, *, include_header: bool = True, is_banner: bool = True, gray=None) -> str:
         seen.append(data)
         return f"part-{data.decode()}"
 
+    def _fake_gray(data: bytes, *, max_side: int | None = None):
+        img = Image.new("L", (100, 200), color=128)
+        return img, img
+
     with patch("players.screen_parse._pick_banner_image_index", return_value=1):
-        with patch("players.screen_parse.ocr_image_bytes", side_effect=_fake):
-            merged = ocr_images([b"a", b"banner", b"c"])
+        with patch("players.screen_parse._prepare_gray_image", side_effect=_fake_gray):
+            with patch("players.screen_parse.ocr_image_bytes", side_effect=_fake):
+                merged = ocr_images([b"a", b"banner", b"c"])
 
     assert len(seen) == 3
     assert merged.startswith("part-banner")

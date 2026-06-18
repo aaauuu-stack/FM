@@ -10,14 +10,18 @@ from concurrent.futures import ThreadPoolExecutor
 
 from odds.api_normalize import TEAM_ALIASES, normalize_team
 from players.models import MatchRoster, PlayerBonus
+from predict.timing import set_progress, timed
 from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
 
 HOME_COL_MARKER = "__HOME_COL__"
 AWAY_COL_MARKER = "__AWAY_COL__"
 
-# One Tesseract pass per screenshot (Render: ~10x faster than multi-region).
-OCR_MAX_SIDE = 720 if os.environ.get("RENDER") else 960
-_OCR_MAX_CONCURRENT = 3
+_ON_RENDER = bool(os.environ.get("RENDER"))
+# Render free tier: ~0.1 CPU — serial OCR + smaller images beats parallel Tesseract.
+OCR_MAX_SIDE = 480 if _ON_RENDER else 960
+_BANNER_THUMB_SIDE = 320
+_OCR_MAX_CONCURRENT = 1 if _ON_RENDER else 3
+_OCR_MAX_IMAGES = 4 if _ON_RENDER else 6
 _ocr_semaphore = threading.Semaphore(_OCR_MAX_CONCURRENT)
 _BANNER_MIN_BRIGHTNESS = 160
 _BANNER_MIN_SCORE = 900.0
@@ -92,23 +96,34 @@ def _known_team_tokens() -> list[tuple[str, str]]:
     return sorted(seen.items(), key=lambda x: len(x[0]), reverse=True)
 
 
-def _prepare_gray_image(data: bytes):
+def _prepare_gray_image(data: bytes, *, max_side: int | None = None):
     from PIL import Image, ImageOps
 
+    limit = max_side if max_side is not None else OCR_MAX_SIDE
     image = Image.open(io.BytesIO(data))
     image = ImageOps.exif_transpose(image)
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
     width, height = image.size
-    if max(width, height) > OCR_MAX_SIDE:
-        scale = OCR_MAX_SIDE / max(width, height)
-        resample = Image.Resampling.BILINEAR if os.environ.get("RENDER") else Image.Resampling.LANCZOS
+    if max(width, height) > limit:
+        scale = limit / max(width, height)
+        resample = Image.Resampling.BILINEAR if _ON_RENDER else Image.Resampling.LANCZOS
         image = image.resize(
             (max(1, int(width * scale)), max(1, int(height * scale))),
             resample,
         )
     gray = image.convert("L")
     return image, ImageOps.autocontrast(gray)
+
+
+def _crop_body(gray, *, top_pct: float = 0.07, bottom_pct: float = 0.11):
+    """Skip status bar / bottom tabs on player-scroll screenshots."""
+    width, height = gray.size
+    y0 = int(height * top_pct)
+    y1 = int(height * (1.0 - bottom_pct))
+    if y1 - y0 < 48:
+        return gray
+    return gray.crop((0, y0, width, y1))
 
 
 def _row_brightness(gray, y: int) -> float:
@@ -142,7 +157,10 @@ def _pick_banner_image_index(blobs: list[bytes]) -> int | None:
     """Index of the screenshot most likely to contain the match banner."""
     if not blobs:
         return None
-    scores = [_banner_strip_score(_prepare_gray_image(blob)[1]) for blob in blobs]
+    scores = [
+        _banner_strip_score(_prepare_gray_image(blob, max_side=_BANNER_THUMB_SIDE)[1])
+        for blob in blobs
+    ]
     best_idx = max(range(len(scores)), key=lambda i: scores[i])
     if scores[best_idx] < _BANNER_MIN_SCORE:
         return None
@@ -160,7 +178,25 @@ def _ocr_single_pass(gray) -> str:
             return pytesseract.image_to_string(gray, lang="eng", config="--psm 6 --oem 1")
 
 
-def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
+def _ocr_one_image(
+    index: int,
+    total: int,
+    blob: bytes,
+    gray,
+    is_banner: bool,
+) -> str:
+    set_progress(f"ocr {index + 1}/{total}")
+    with timed(f"ocr_{index + 1}"):
+        return ocr_image_bytes(blob, include_header=True, is_banner=is_banner, gray=gray)
+
+
+def ocr_image_bytes(
+    data: bytes,
+    *,
+    include_header: bool = True,
+    is_banner: bool = True,
+    gray=None,
+) -> str:
     """OCR one FM screenshot in a single Tesseract pass."""
     try:
         import pytesseract  # noqa: F401
@@ -172,25 +208,41 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     if len(data) > 5 * 1024 * 1024:
         raise ValueError("Screenshot troppo grande (max 5 MB ciascuno)")
 
-    _image, gray = _prepare_gray_image(data)
-    return _ocr_single_pass(gray).strip()
+    if gray is None:
+        _image, gray = _prepare_gray_image(data)
+    crop = gray if is_banner or include_header else _crop_body(gray)
+    return _ocr_single_pass(crop).strip()
 
 
 def ocr_images(images: list[bytes]) -> str:
-    if len(images) > 6:
-        raise ValueError("Massimo 6 screenshot per analisi")
+    if len(images) > _OCR_MAX_IMAGES:
+        hint = (
+            f"Massimo {_OCR_MAX_IMAGES} screenshot su cloud (CPU limitata). "
+            "Carica banner partita + 2–3 scroll giocatori."
+            if _ON_RENDER
+            else "Massimo 6 screenshot per analisi"
+        )
+        raise ValueError(hint)
     blobs = [b for b in images if b]
     if not blobs:
         return ""
 
     banner_idx = _pick_banner_image_index(blobs)
+    prepared = [_prepare_gray_image(blob) for blob in blobs]
     workers = min(_OCR_MAX_CONCURRENT, len(blobs))
 
     indexed: list[tuple[int, str]] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            i: pool.submit(ocr_image_bytes, blob, include_header=True)
-            for i, blob in enumerate(blobs)
+            i: pool.submit(
+                _ocr_one_image,
+                i,
+                len(blobs),
+                blobs[i],
+                prepared[i][1],
+                banner_idx is None or i == banner_idx,
+            )
+            for i in range(len(blobs))
         }
         for i, future in futures.items():
             text = future.result().strip()
