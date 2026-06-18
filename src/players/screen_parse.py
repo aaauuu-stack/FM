@@ -28,6 +28,7 @@ _PLAYER_COL_WHITELIST = (
 _BANNER_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ-–— "
 _BANNER_MIN_BRIGHTNESS = 160
 _BANNER_UPSCALE_WIDTH = 900
+_BANNER_MIN_SCORE = 900.0
 
 
 def _default_match_id(home: str, away: str) -> str:
@@ -130,6 +131,27 @@ def _row_brightness(gray, y: int) -> float:
     return sum(pixels) / max(len(pixels), 1)
 
 
+def _banner_strip_score(gray) -> float:
+    """Score how likely the top of the image contains the FM match banner."""
+    _, height = gray.size
+    scan_h = int(height * 0.32)
+    y = 0
+    best = 0.0
+
+    while y < scan_h:
+        while y < scan_h and _row_brightness(gray, y) < _BANNER_MIN_BRIGHTNESS:
+            y += 1
+        start = y
+        while y < scan_h and _row_brightness(gray, y) >= _BANNER_MIN_BRIGHTNESS - 15:
+            y += 1
+        end = y
+        band_h = end - start
+        if band_h >= 6:
+            avg = sum(_row_brightness(gray, row_y) for row_y in range(start, end)) / band_h
+            best = max(best, band_h * avg)
+    return best
+
+
 def _detect_banner_box(gray) -> tuple[int, int, int, int]:
     """Locate the bright FM match banner (e.g. UZBEKISTAN - COLOMBIA)."""
     width, height = gray.size
@@ -159,6 +181,17 @@ def _detect_banner_box(gray) -> tuple[int, int, int, int]:
     top = int(height * 0.11)
     bottom = int(height * 0.19)
     return (0, top, width, bottom)
+
+
+def _pick_banner_image_index(blobs: list[bytes]) -> int | None:
+    """Index of the screenshot most likely to contain the match banner."""
+    if not blobs:
+        return None
+    scores = [_banner_strip_score(_prepare_gray_image(blob)[1]) for blob in blobs]
+    best_idx = max(range(len(scores)), key=lambda i: scores[i])
+    if scores[best_idx] < _BANNER_MIN_SCORE:
+        return None
+    return best_idx
 
 
 def _prepare_banner_for_ocr(crop):
@@ -221,14 +254,18 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     _image, gray = _prepare_gray_image(data)
     width, height = gray.size
 
-    banner_box = _detect_banner_box(gray)
-    body_top = min(height, banner_box[3] + max(8, int(height * 0.01)))
-    header_h = max(banner_box[3] + 4, int(height * 0.12))
+    banner_box = _detect_banner_box(gray) if include_header else None
+    if include_header and banner_box is not None:
+        body_top = min(height, banner_box[3] + max(8, int(height * 0.01)))
+        header_h = max(banner_box[3] + 4, int(height * 0.12))
+    else:
+        body_top = int(height * 0.02)
+        header_h = int(height * 0.12)
     mid = width // 2
     gutter = max(8, width // 40)
 
     jobs: list[tuple[str, tuple[int, int, int, int], int, str, str | None, bool, bool]] = []
-    if include_header:
+    if include_header and banner_box is not None:
         jobs.append(("header", (0, 0, width, header_h), 7, "ita+eng", None, False, False))
         jobs.append(("banner", banner_box, 7, "eng", _BANNER_WHITELIST, False, True))
     jobs.extend(
@@ -279,7 +316,8 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     away_col = results.get("away", "")
 
     return (
-        f"{header_text}\n{HOME_COL_MARKER}\n{home_col}\n"
+        (f"{header_text}\n" if header_text else "")
+        + f"{HOME_COL_MARKER}\n{home_col}\n"
         f"{AWAY_COL_MARKER}\n{away_col}"
     )
 
@@ -290,11 +328,27 @@ def ocr_images(images: list[bytes]) -> str:
     blobs = [b for b in images if b]
     if not blobs:
         return ""
-    parts: list[str] = []
-    parts.append(ocr_image_bytes(blobs[0], include_header=True).strip())
-    for blob in blobs[1:]:
-        parts.append(ocr_image_bytes(blob, include_header=False).strip())
-    return "\n\n".join(p for p in parts if p)
+
+    banner_idx = _pick_banner_image_index(blobs)
+    ocr_all_headers = banner_idx is None
+
+    indexed: list[tuple[int, str]] = []
+    for i, blob in enumerate(blobs):
+        with_header = ocr_all_headers or i == banner_idx
+        text = ocr_image_bytes(blob, include_header=with_header).strip()
+        if text:
+            indexed.append((i, text))
+
+    if not indexed:
+        return ""
+
+    if banner_idx is not None:
+        ordered = [part for idx, part in indexed if idx == banner_idx]
+        ordered.extend(part for idx, part in indexed if idx != banner_idx)
+    else:
+        ordered = [part for _, part in indexed]
+
+    return "\n\n".join(ordered)
 
 
 def _detect_role(fragment: str) -> str | None:

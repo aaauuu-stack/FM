@@ -159,8 +159,9 @@ def _form_html(
     <input type="file" name="screenshots" accept="image/*" multiple required>
   </label>
   <p class="upload-hint">
-    Carica 1–5 screen dall'app Fantamondiale: header partita (es. Uzbekistan – Colombia)
-    e liste giocatori con bonus. Casa, ospite e vice vengono rilevati da soli.
+    Carica 1–5 screen dall'app Fantamondiale (ordine libero).
+    Almeno uno deve mostrare il banner partita in alto (es. Uzbekistan – Colombia);
+    gli altri possono essere scroll con più giocatori.
   </p>
   {"<p class='upload-hint'>Analisi ~30–90 sec su cloud (tutte le fonti). Non chiudere la pagina.</p>" if IS_RENDER else ""}
   <div class="checks">

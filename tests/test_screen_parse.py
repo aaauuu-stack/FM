@@ -131,6 +131,64 @@ CAMPAZ +9
     assert sum(1 for p in players if p.side == "away") >= 2
 
 
+def test_pick_banner_image_index():
+    import io
+
+    from PIL import Image
+
+    from players.screen_parse import _pick_banner_image_index
+
+    def _blob_with_band(y0: int, y1: int) -> bytes:
+        img = Image.new("L", (400, 800), color=20)
+        for y in range(y0, y1):
+            for x in range(400):
+                img.putpixel((x, y), 235)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    scroll = _blob_with_band(700, 710)
+    banner = _blob_with_band(96, 144)
+    assert _pick_banner_image_index([scroll, banner, scroll]) == 1
+
+
+def test_ocr_images_header_on_detected_banner_only():
+    from unittest.mock import patch
+
+    from players.screen_parse import ocr_images
+
+    calls: list[bool] = []
+
+    def _fake(_data: bytes, *, include_header: bool = True) -> str:
+        calls.append(include_header)
+        return f"chunk-{len(calls)}-hdr={include_header}"
+
+    with patch("players.screen_parse._pick_banner_image_index", return_value=1):
+        with patch("players.screen_parse.ocr_image_bytes", side_effect=_fake):
+            merged = ocr_images([b"a", b"b", b"c"])
+
+    assert calls == [False, True, False]
+    assert merged.startswith("chunk-2-hdr=True")
+
+
+def test_ocr_images_banner_only_on_first():
+    from unittest.mock import patch
+
+    from players.screen_parse import ocr_images
+
+    calls: list[bool] = []
+
+    def _fake(_data: bytes, *, include_header: bool = True) -> str:
+        calls.append(include_header)
+        return f"chunk hdr={include_header}"
+
+    with patch("players.screen_parse._pick_banner_image_index", return_value=0):
+        with patch("players.screen_parse.ocr_image_bytes", side_effect=_fake):
+            ocr_images([b"a", b"b", b"c"])
+
+    assert calls == [True, False, False]
+
+
 def test_detect_banner_box_finds_bright_horizontal_band():
     from PIL import Image
 
