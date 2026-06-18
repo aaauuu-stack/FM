@@ -131,6 +131,12 @@ CAMPAZ +9
     assert sum(1 for p in players if p.side == "away") >= 2
 
 
+def test_extract_match_without_dash_separator():
+    home, away = extract_match_teams("SCELTA CALCIATORI\nUZBEKISTAN COLOMBIA\nPortieri")
+    assert home == "Uzbekistan"
+    assert away == "Colombia"
+
+
 def test_extract_match_inghilterra_croazia():
     home, away = extract_match_teams(ENG_CRO_SAMPLE)
     assert home == "Inghilterra"

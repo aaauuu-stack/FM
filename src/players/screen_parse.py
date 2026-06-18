@@ -25,6 +25,7 @@ _PLAYER_COL_WHITELIST = (
     "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ"
     "✓✔☑"
 )
+_BANNER_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ-–— "
 
 
 def _default_match_id(home: str, away: str) -> str:
@@ -58,6 +59,9 @@ MATCH_IN_TEXT = re.compile(
     r"\s*(?:[-–—|·]|vs\.?)\s*"
     r"(?P<away>[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ\s.'-]{2,30})",
     re.I,
+)
+MATCH_LOOSE = re.compile(
+    r"\b(?P<home>[A-ZÀ-ÖØ-Þ]{4,24})\s+(?:[-–—]\s*)?(?P<away>[A-ZÀ-ÖØ-Þ]{4,24})\b"
 )
 
 SKIP_LINE = re.compile(
@@ -125,11 +129,14 @@ def _ocr_region(
     psm: int = 6,
     lang: str = "ita+eng",
     whitelist: str | None = None,
+    enhance: bool = False,
 ) -> str:
     import pytesseract
+    from PIL import ImageOps
 
     crop = gray.crop(box)
-    crop = crop.point(lambda p: 255 if p > 140 else 0) if box[1] < gray.size[1] * 0.25 else crop
+    if enhance:
+        crop = ImageOps.autocontrast(crop)
     config_parts = [f"--psm {psm}", "--oem 1"]
     if whitelist:
         config_parts.append(f"-c tessedit_char_whitelist={whitelist}")
@@ -158,14 +165,26 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     _image, gray = _prepare_gray_image(data)
     width, height = gray.size
 
-    header_h = int(height * 0.20)
-    body_top = int(height * 0.12)
+    header_h = int(height * 0.26)
+    banner_top = int(height * 0.09)
+    banner_bottom = int(height * 0.25)
+    body_top = int(height * 0.22)
     mid = width // 2
     gutter = max(8, width // 40)
 
-    jobs: list[tuple[str, tuple[int, int, int, int], int, str, str | None]] = []
+    jobs: list[tuple[str, tuple[int, int, int, int], int, str, str | None, bool]] = []
     if include_header:
-        jobs.append(("header", (0, 0, width, header_h), 7, "ita+eng", None))
+        jobs.append(("header", (0, 0, width, header_h), 7, "ita+eng", None, False))
+        jobs.append(
+            (
+                "banner",
+                (0, banner_top, width, banner_bottom),
+                7,
+                "eng",
+                _BANNER_WHITELIST,
+                True,
+            )
+        )
     jobs.extend(
         [
             (
@@ -174,6 +193,7 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
                 6,
                 "eng",
                 _PLAYER_COL_WHITELIST,
+                False,
             ),
             (
                 "away",
@@ -181,6 +201,7 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
                 6,
                 "eng",
                 _PLAYER_COL_WHITELIST,
+                False,
             ),
         ]
     )
@@ -189,13 +210,16 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     workers = min(_OCR_MAX_CONCURRENT, len(jobs))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
-            name: pool.submit(_ocr_region, gray, box, psm=psm, lang=lang, whitelist=wl)
-            for name, box, psm, lang, wl in jobs
+            name: pool.submit(
+                _ocr_region, gray, box, psm=psm, lang=lang, whitelist=wl, enhance=enh
+            )
+            for name, box, psm, lang, wl, enh in jobs
         }
         for name, future in futures.items():
             results[name] = future.result().strip()
 
-    header_text = results.get("header", "")
+    header_parts = [results.get("header", ""), results.get("banner", "")]
+    header_text = "\n".join(part for part in header_parts if part)
     home_col = results.get("home", "")
     away_col = results.get("away", "")
 
@@ -263,17 +287,37 @@ def _find_teams_by_position(text: str) -> list[str]:
     return [name for _, name in hits]
 
 
+def _resolve_team_pair(home_raw: str, away_raw: str) -> tuple[str, str] | None:
+    home_known = _find_team_in_text(home_raw)
+    away_known = _find_team_in_text(away_raw)
+    if not home_known and not away_known:
+        return None
+    home = home_known or home_raw.strip().title()
+    away = away_known or away_raw.strip().title()
+    if normalize_team(home) == normalize_team(away):
+        return None
+    return home, away
+
+
 def extract_match_teams(text: str) -> tuple[str, str]:
     """Home and away from OCR text (FM banner: UZBEKISTAN – COLOMBIA)."""
     compact = " ".join(text.split())
+    header = compact[:800]
 
-    header = compact[:600]
-    for match in MATCH_IN_TEXT.finditer(header):
-        home = _find_team_in_text(match.group("home")) or match.group("home").strip().title()
-        away_raw = match.group("away")
-        away = _find_team_in_text(away_raw) or away_raw.strip().title()
-        if normalize_team(home) != normalize_team(away):
-            return home, away
+    for pattern in (MATCH_IN_TEXT, MATCH_LOOSE):
+        for match in pattern.finditer(header):
+            pair = _resolve_team_pair(match.group("home"), match.group("away"))
+            if pair:
+                return pair
+
+    if HOME_COL_MARKER in text:
+        pre_col = text.split(HOME_COL_MARKER, 1)[0]
+        pre_compact = " ".join(pre_col.split())
+        for pattern in (MATCH_IN_TEXT, MATCH_LOOSE):
+            for match in pattern.finditer(pre_compact):
+                pair = _resolve_team_pair(match.group("home"), match.group("away"))
+                if pair:
+                    return pair
 
     found = _find_teams_by_position(text)
     if len(found) >= 2:
