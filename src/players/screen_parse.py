@@ -26,6 +26,8 @@ _PLAYER_COL_WHITELIST = (
     "✓✔☑"
 )
 _BANNER_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ-–— "
+_BANNER_MIN_BRIGHTNESS = 160
+_BANNER_UPSCALE_WIDTH = 900
 
 
 def _default_match_id(home: str, away: str) -> str:
@@ -122,6 +124,57 @@ def _prepare_gray_image(data: bytes):
     return image, image.convert("L")
 
 
+def _row_brightness(gray, y: int) -> float:
+    width, _ = gray.size
+    pixels = gray.crop((0, y, width, y + 1)).tobytes()
+    return sum(pixels) / max(len(pixels), 1)
+
+
+def _detect_banner_box(gray) -> tuple[int, int, int, int]:
+    """Locate the bright FM match banner (e.g. UZBEKISTAN - COLOMBIA)."""
+    width, height = gray.size
+    scan_h = int(height * 0.32)
+    y = 0
+    best: tuple[int, int, float] | None = None
+
+    while y < scan_h:
+        while y < scan_h and _row_brightness(gray, y) < _BANNER_MIN_BRIGHTNESS:
+            y += 1
+        start = y
+        while y < scan_h and _row_brightness(gray, y) >= _BANNER_MIN_BRIGHTNESS - 15:
+            y += 1
+        end = y
+        band_h = end - start
+        if band_h >= 6:
+            avg = sum(_row_brightness(gray, row_y) for row_y in range(start, end)) / band_h
+            score = band_h * avg
+            if best is None or score > best[2]:
+                best = (start, end, score)
+
+    if best is not None:
+        top = max(0, best[0] - 2)
+        bottom = min(height, best[1] + 2)
+        return (0, top, width, bottom)
+
+    top = int(height * 0.11)
+    bottom = int(height * 0.19)
+    return (0, top, width, bottom)
+
+
+def _prepare_banner_for_ocr(crop):
+    from PIL import ImageOps
+
+    crop = ImageOps.autocontrast(crop)
+    width, height = crop.size
+    if width < _BANNER_UPSCALE_WIDTH:
+        scale = _BANNER_UPSCALE_WIDTH / width
+        crop = crop.resize(
+            (int(width * scale), max(1, int(height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+    return crop
+
+
 def _ocr_region(
     gray,
     box,
@@ -130,12 +183,15 @@ def _ocr_region(
     lang: str = "ita+eng",
     whitelist: str | None = None,
     enhance: bool = False,
+    banner: bool = False,
 ) -> str:
     import pytesseract
     from PIL import ImageOps
 
     crop = gray.crop(box)
-    if enhance:
+    if banner:
+        crop = _prepare_banner_for_ocr(crop)
+    elif enhance:
         crop = ImageOps.autocontrast(crop)
     config_parts = [f"--psm {psm}", "--oem 1"]
     if whitelist:
@@ -165,26 +221,16 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     _image, gray = _prepare_gray_image(data)
     width, height = gray.size
 
-    header_h = int(height * 0.26)
-    banner_top = int(height * 0.09)
-    banner_bottom = int(height * 0.25)
-    body_top = int(height * 0.22)
+    banner_box = _detect_banner_box(gray)
+    body_top = min(height, banner_box[3] + max(8, int(height * 0.01)))
+    header_h = max(banner_box[3] + 4, int(height * 0.12))
     mid = width // 2
     gutter = max(8, width // 40)
 
-    jobs: list[tuple[str, tuple[int, int, int, int], int, str, str | None, bool]] = []
+    jobs: list[tuple[str, tuple[int, int, int, int], int, str, str | None, bool, bool]] = []
     if include_header:
-        jobs.append(("header", (0, 0, width, header_h), 7, "ita+eng", None, False))
-        jobs.append(
-            (
-                "banner",
-                (0, banner_top, width, banner_bottom),
-                7,
-                "eng",
-                _BANNER_WHITELIST,
-                True,
-            )
-        )
+        jobs.append(("header", (0, 0, width, header_h), 7, "ita+eng", None, False, False))
+        jobs.append(("banner", banner_box, 7, "eng", _BANNER_WHITELIST, False, True))
     jobs.extend(
         [
             (
@@ -194,6 +240,7 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
                 "eng",
                 _PLAYER_COL_WHITELIST,
                 False,
+                False,
             ),
             (
                 "away",
@@ -201,6 +248,7 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
                 6,
                 "eng",
                 _PLAYER_COL_WHITELIST,
+                False,
                 False,
             ),
         ]
@@ -211,9 +259,16 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             name: pool.submit(
-                _ocr_region, gray, box, psm=psm, lang=lang, whitelist=wl, enhance=enh
+                _ocr_region,
+                gray,
+                box,
+                psm=psm,
+                lang=lang,
+                whitelist=wl,
+                enhance=enh,
+                banner=is_banner,
             )
-            for name, box, psm, lang, wl, enh in jobs
+            for name, box, psm, lang, wl, enh, is_banner in jobs
         }
         for name, future in futures.items():
             results[name] = future.result().strip()
@@ -323,9 +378,11 @@ def extract_match_teams(text: str) -> tuple[str, str]:
     if len(found) >= 2:
         return found[0], found[1]
 
+    snippet = compact[:120].strip()
     raise ValueError(
         "Non riesco a leggere casa/ospite dagli screenshot. "
         "Includi lo screen con il banner partita in alto (es. UZBEKISTAN – COLOMBIA)."
+        + (f" OCR banner: «{snippet}»" if snippet else "")
     )
 
 

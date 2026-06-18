@@ -131,6 +131,20 @@ CAMPAZ +9
     assert sum(1 for p in players if p.side == "away") >= 2
 
 
+def test_detect_banner_box_finds_bright_horizontal_band():
+    from PIL import Image
+
+    from players.screen_parse import _detect_banner_box
+
+    img = Image.new("L", (400, 800), color=20)
+    for y in range(96, 144):
+        for x in range(400):
+            img.putpixel((x, y), 235)
+    _, top, _, bottom = _detect_banner_box(img)
+    assert 90 <= top <= 100
+    assert 140 <= bottom <= 150
+
+
 def test_extract_match_without_dash_separator():
     home, away = extract_match_teams("SCELTA CALCIATORI\nUZBEKISTAN COLOMBIA\nPortieri")
     assert home == "Uzbekistan"
