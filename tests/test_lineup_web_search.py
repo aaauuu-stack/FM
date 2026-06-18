@@ -49,24 +49,34 @@ def _swiss_xi_roster() -> MatchRoster:
         "Memic": "FWD",
         "Ndoye": "MID",
     }
+    gk_bonus = {
+        "Keller": (5, 6),
+        "Kobel": (5, 5),
+        "Hadzikic": (7, 7),
+        "Vasilj": (6, 6),
+    }
     players: list[PlayerBonus] = []
     for name in home:
+        bg, bcs = gk_bonus.get(name, (8, 0))
         players.append(
             PlayerBonus(
                 name=name,
                 side="home",
                 role=roles.get(name, "DEF" if "ic" in name or name.endswith("mer") else "MID"),
-                bonus_goal=8,
+                bonus_goal=bg,
+                bonus_clean_sheet=bcs if name in gk_bonus else 0,
                 vice_allenatore=name == "Ndoye",
             )
         )
     for name in away:
+        bg, bcs = gk_bonus.get(name, (9, 0))
         players.append(
             PlayerBonus(
                 name=name,
                 side="away",
                 role=roles.get(name, "DEF"),
-                bonus_goal=9,
+                bonus_goal=bg,
+                bonus_clean_sheet=bcs if name in gk_bonus else 0,
             )
         )
     return MatchRoster("T", "Svizzera", "Bosnia", players=players)
@@ -102,7 +112,7 @@ def test_infer_starters_uses_web_search_when_sofa_missing():
             updated, note = infer_starters(roster)
 
     starters = {p.name for p in updated.players if p.starter}
-    assert "Kobel" in starters
+    assert "Kobel" in starters  # GK da bonus FM, non dalla ricerca web
     assert "Embolo" in starters
     assert "Amdouni" not in starters
     assert "Vasilj" in starters

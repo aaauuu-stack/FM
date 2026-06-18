@@ -106,6 +106,32 @@ def test_mark_gk_goalscorer_quotes_before_infer():
     assert keller.book_goal_matched
 
 
+def test_web_search_never_marks_backup_gk():
+    """Ricerca web che cita solo Keller → titolare resta Kobel."""
+    from unittest.mock import patch
+
+    from players.starters import infer_starters
+
+    roster = _swiss_bosnia_roster()
+    corpus = (
+        "Svizzera convocati: Keller in porta, Akanji, Xhaka, Embolo, Widmer, "
+        "Freuler, Vargas, Aebischer, Rodriguez, Elvedi. "
+        "Bosnia: Hadzikic, Dedic, Kolasinac, Demirovic, Lukic, Katic."
+    )
+    with patch("players.lineup_web_search.web_search_enabled", return_value=True):
+        with patch("players.lineup_web_search._collect_corpus", return_value=corpus):
+            updated, note = infer_starters(roster)
+
+    keller = next(p for p in updated.players if p.name == "Keller")
+    kobel = next(p for p in updated.players if p.name == "Kobel")
+    hadzikic = next(p for p in updated.players if p.name == "Hadzikic")
+    vasilj = next(p for p in updated.players if p.name == "Vasilj")
+    assert kobel.starter
+    assert not keller.starter
+    assert vasilj.starter
+    assert not hadzikic.starter
+
+
 def test_sofa_complete_lineup_excludes_backup_gk():
     """Con XI SofaScore completo, portiere backup (Keller) non è titolare."""
     from unittest.mock import patch

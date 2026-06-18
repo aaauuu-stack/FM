@@ -67,27 +67,33 @@ def mark_gk_goalscorer_quotes(
     return roster
 
 
-def _consolidate_gk_starters(players: list[PlayerBonus]) -> None:
-    """Exactly one starting GK per side (only when SofaScore marked at least one)."""
+def _consolidate_gk_starters(players: list[PlayerBonus]) -> list[str]:
+    """
+    Exactly one starting GK per side.
+
+    Always picks from the full GK pool (bonus FM + quote book), so a backup
+    wrongly tagged by web search (e.g. Keller) cannot stay titolare.
+    """
+    notes: list[str] = []
     for side in ("home", "away"):
         gks = [p for p in players if p.is_goalkeeper and p.side == side]
         if not gks:
             continue
-        starters = [p for p in gks if p.starter]
-        if not starters:
-            for p in gks:
-                idx = players.index(p)
-                players[idx] = replace(p, starter=False)
-            continue
-        pick = _pick_one_gk(starters)
+        wrong = [p.name for p in gks if p.starter]
+        pick = _pick_one_gk(gks)
         if not pick:
             continue
-        for p in gks:
-            idx = players.index(p)
-            players[idx] = replace(
-                p,
-                starter=(p is pick or p.name == pick.name and p.side == pick.side),
-            )
+        for i, player in enumerate(players):
+            if player.is_goalkeeper and player.side == side:
+                players[i] = replace(
+                    player,
+                    starter=player.name == pick.name,
+                )
+        if wrong and pick.name not in wrong:
+            notes.append(f"portiere {side}: {pick.name} (non {wrong[0]})")
+        elif not wrong:
+            notes.append(f"portiere {side}: {pick.name} (bonus FM)")
+    return notes
 
 
 def _heuristic_xi(side_players: list[PlayerBonus]) -> set[str]:
@@ -107,30 +113,6 @@ def _heuristic_xi(side_players: list[PlayerBonus]) -> set[str]:
         for player in pool[:need]:
             chosen.add(player.name)
     return chosen
-
-
-def _ensure_gk_starters_fallback(players: list[PlayerBonus]) -> list[str]:
-    """
-    If SofaScore lineups omit the GK, pick one per side by FM bonus.
-
-    Lower bonus_goal ≈ titolare; de-prioritize backup with book anytime-gol quote.
-    """
-    notes: list[str] = []
-    for side in ("home", "away"):
-        gks = [p for p in players if p.is_goalkeeper and p.side == side]
-        if not gks or any(p.starter for p in gks):
-            continue
-        pick = _pick_one_gk(gks)
-        if not pick:
-            continue
-        for i, player in enumerate(players):
-            if player.is_goalkeeper and player.side == side:
-                players[i] = replace(
-                    player,
-                    starter=player.name == pick.name,
-                )
-        notes.append(f"portiere {side}: {pick.name} (bonus FM più basso)")
-    return notes
 
 
 def _mark_sofa_starters(
@@ -224,8 +206,7 @@ def infer_starters(
         if marked < min_xi:
             notes.append(f"euristica bonus FM ({side})")
 
-    _consolidate_gk_starters(players)
-    notes.extend(_ensure_gk_starters_fallback(players))
+    notes.extend(_consolidate_gk_starters(players))
 
     return (
         MatchRoster(

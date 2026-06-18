@@ -156,6 +156,11 @@ def fetch_lineups_web_search(
     away_players = roster.away_players()
     home_names = _names_in_corpus(home_players, corpus)
     away_names = _names_in_corpus(away_players, corpus)
+    # Squad lists mention every GK; titolare is resolved separately by FM bonus.
+    home_gk = {p.name for p in home_players if p.is_goalkeeper}
+    away_gk = {p.name for p in away_players if p.is_goalkeeper}
+    home_names -= home_gk
+    away_names -= away_gk
 
     notes: list[str] = []
     if len(home_names) >= _MIN_NAMES_PER_SIDE:
