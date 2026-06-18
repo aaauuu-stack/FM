@@ -32,6 +32,9 @@ def test_resolve_starters_one_gk_per_team_with_sofa():
     with patch(
         "players.starters.fetch_event_starter_names",
         return_value=(sofa_home, sofa_away, "lineups SofaScore"),
+    ), patch(
+        "players.starters.fetch_event_gk_starter_names",
+        return_value=({"Kobel", "G. Kobel"}, {"Vasilj", "N. Vasilj"}),
     ):
         roster, _ = infer_starters(_swiss_bosnia_roster(), sofascore_event_id=1)
     home_gks = [p for p in roster.home_players() if p.is_goalkeeper]
@@ -104,6 +107,34 @@ def test_mark_gk_goalscorer_quotes_before_infer():
     assert kobel.starter
     assert not keller.starter
     assert keller.book_goal_matched
+
+
+def test_sofa_gk_position_overrides_wrongly_marked_backup():
+    """Se XI generico marca Keller ma SofaScore GK = Kobel → Kobel titolare."""
+    from unittest.mock import patch
+
+    from players.starters import infer_starters
+
+    sofa_home = {"Keller", "Kobel", "Embolo", "Akanji", "Xhaka", "Freuler", "Vargas", "Widmer", "Elvedi", "Rodriguez", "Aebischer"}
+    sofa_away = {"Hadzikic", "Vasilj", "Dedic", "Katic", "Lukic", "Demirovic", "Basic", "Kolasinac", "Muharemovic", "Bajraktarevic", "Tahirovic"}
+    with patch(
+        "players.starters.fetch_event_starter_names",
+        return_value=(sofa_home, sofa_away, "lineups SofaScore parziali"),
+    ), patch(
+        "players.starters.fetch_event_gk_starter_names",
+        return_value=({"Kobel", "G. Kobel"}, {"Vasilj"}),
+    ):
+        roster, note = infer_starters(_swiss_bosnia_roster(), sofascore_event_id=1)
+
+    keller = next(p for p in roster.players if p.name == "Keller")
+    kobel = next(p for p in roster.players if p.name == "Kobel")
+    hadzikic = next(p for p in roster.players if p.name == "Hadzikic")
+    vasilj = next(p for p in roster.players if p.name == "Vasilj")
+    assert kobel.starter
+    assert not keller.starter
+    assert vasilj.starter
+    assert not hadzikic.starter
+    assert "portiere home: Kobel (SofaScore)" in note
 
 
 def test_web_search_never_marks_backup_gk():
@@ -203,6 +234,9 @@ def test_sofa_complete_lineup_excludes_backup_gk():
     with patch(
         "players.starters.fetch_event_starter_names",
         return_value=(sofa_home, sofa_away, "lineups SofaScore (11+11 titolari)"),
+    ), patch(
+        "players.starters.fetch_event_gk_starter_names",
+        return_value=({"Kobel", "G. Kobel"}, {"Vasilj", "N. Vasilj"}),
     ):
         updated, note = infer_starters(roster, sofascore_event_id=12345)
 

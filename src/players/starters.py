@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from odds.scrape_sofascore_subs import fetch_event_starter_names
+from odds.scrape_sofascore_subs import fetch_event_gk_starter_names, fetch_event_starter_names
 from odds.sofascore_event_lookup import min_sofa_xi_per_side
 from players.lineup_web_search import fetch_lineups_web_search
 from players.models import MatchRoster, PlayerBonus
@@ -21,24 +21,37 @@ def _matches_any(fm_name: str, api_names: set[str]) -> bool:
 
 def _pick_one_gk(gks: list[PlayerBonus]) -> PlayerBonus | None:
     """
-    Choose the likely starting GK.
+    Choose the likely starting GK from the full squad list.
 
     FM: lower bonus_goal / bonus_clean_sheet ≈ titolare.
     Backup GKs often appear in the anytime goalscorer market (book_goal_matched).
     """
     if not gks:
         return None
-    starters = [p for p in gks if p.starter]
-    pool = starters if starters else gks
     return min(
-        pool,
+        gks,
         key=lambda p: (
             p.bonus_goal,
             p.bonus_clean_sheet,
             int(p.book_goal_matched),
+            int(p.book_card_matched),
             p.name.lower(),
         ),
     )
+
+
+def _pick_gk_for_side(
+    gks: list[PlayerBonus],
+    sofa_gk_names: set[str],
+) -> PlayerBonus | None:
+    """Prefer SofaScore GK when exactly one roster keeper matches."""
+    if not gks:
+        return None
+    if sofa_gk_names:
+        matched = [p for p in gks if _matches_any(p.name, sofa_gk_names)]
+        if len(matched) == 1:
+            return matched[0]
+    return _pick_one_gk(gks)
 
 
 def mark_gk_goalscorer_quotes(
@@ -67,20 +80,29 @@ def mark_gk_goalscorer_quotes(
     return roster
 
 
-def _consolidate_gk_starters(players: list[PlayerBonus]) -> list[str]:
+def _consolidate_gk_starters(
+    players: list[PlayerBonus],
+    *,
+    sofa_gk_home: set[str] | None = None,
+    sofa_gk_away: set[str] | None = None,
+) -> list[str]:
     """
     Exactly one starting GK per side.
 
-    Always picks from the full GK pool (bonus FM + quote book), so a backup
-    wrongly tagged by web search (e.g. Keller) cannot stay titolare.
+    SofaScore GK (position G) wins when available; else FM bonus + book quotes
+    over the full keeper pool — never only among already-marked names.
     """
     notes: list[str] = []
+    sofa_by_side = {
+        "home": sofa_gk_home or set(),
+        "away": sofa_gk_away or set(),
+    }
     for side in ("home", "away"):
         gks = [p for p in players if p.is_goalkeeper and p.side == side]
         if not gks:
             continue
         wrong = [p.name for p in gks if p.starter]
-        pick = _pick_one_gk(gks)
+        pick = _pick_gk_for_side(gks, sofa_by_side[side])
         if not pick:
             continue
         for i, player in enumerate(players):
@@ -89,7 +111,9 @@ def _consolidate_gk_starters(players: list[PlayerBonus]) -> list[str]:
                     player,
                     starter=player.name == pick.name,
                 )
-        if wrong and pick.name not in wrong:
+        if sofa_by_side[side] and _matches_any(pick.name, sofa_by_side[side]):
+            notes.append(f"portiere {side}: {pick.name} (SofaScore)")
+        elif wrong and pick.name not in wrong:
             notes.append(f"portiere {side}: {pick.name} (non {wrong[0]})")
         elif not wrong:
             notes.append(f"portiere {side}: {pick.name} (bonus FM)")
@@ -149,9 +173,12 @@ def infer_starters(
 
     home_names: set[str] = set()
     away_names: set[str] = set()
+    sofa_gk_home: set[str] = set()
+    sofa_gk_away: set[str] = set()
     lineup_detail = ""
     if sofascore_event_id:
         home_names, away_names, lineup_detail = fetch_event_starter_names(sofascore_event_id)
+        sofa_gk_home, sofa_gk_away = fetch_event_gk_starter_names(sofascore_event_id)
 
     sofa_home_full = len(home_names) >= min_xi
     sofa_away_full = len(away_names) >= min_xi
@@ -206,7 +233,13 @@ def infer_starters(
         if marked < min_xi:
             notes.append(f"euristica bonus FM ({side})")
 
-    notes.extend(_consolidate_gk_starters(players))
+    notes.extend(
+        _consolidate_gk_starters(
+            players,
+            sofa_gk_home=sofa_gk_home,
+            sofa_gk_away=sofa_gk_away,
+        )
+    )
 
     return (
         MatchRoster(

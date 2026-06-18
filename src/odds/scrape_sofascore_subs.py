@@ -118,6 +118,32 @@ def fetch_event_starter_names(event_id: int) -> tuple[set[str], set[str], str]:
     )
 
 
+def _gk_starters_from_lineups(lineups: dict, side_key: str) -> set[str]:
+    """Starting goalkeeper only (position G/GK, not substitute)."""
+    side = lineups.get(side_key) or {}
+    names: set[str] = set()
+    for entry in side.get("players") or []:
+        if not isinstance(entry, dict) or entry.get("substitute") is True:
+            continue
+        player = entry.get("player") or {}
+        pos = str(entry.get("position") or player.get("position") or "").upper()
+        if pos not in {"G", "GK"}:
+            continue
+        names.update(_sofascore_player_name_variants(player))
+    return names
+
+
+def fetch_event_gk_starter_names(event_id: int) -> tuple[set[str], set[str]]:
+    """GK starter names from SofaScore lineups — works even when outfield XI is incomplete."""
+    lineups = _fetch_lineups(event_id)
+    if not lineups:
+        return set(), set()
+    return (
+        _gk_starters_from_lineups(lineups, "home"),
+        _gk_starters_from_lineups(lineups, "away"),
+    )
+
+
 def _fetch_lineups_with_detail(event_id: int) -> tuple[dict | None, str]:
     lineups = _fetch_lineups(event_id)
     if not lineups:
