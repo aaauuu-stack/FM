@@ -542,9 +542,37 @@ def roster_from_ocr_text(text: str) -> MatchRoster:
 
 
 def roster_from_screenshots(images: list[bytes]) -> MatchRoster:
+    """Read roster from FM screenshots — vision model if configured, else Tesseract."""
     if not images:
         raise ValueError("Carica almeno uno screenshot FM")
+
+    from players.vision_parse import roster_from_vision, vision_configured
+
+    if vision_configured():
+        return roster_from_vision(images)
+
+    if _ON_RENDER:
+        raise RuntimeError(
+            "Su cloud serve OPENAI_API_KEY per leggere gli screenshot "
+            "(come ChatGPT). In alternativa incolla il testo roster nel form. "
+            "Vedi docs/DEPLOY.md."
+        )
+
     text = ocr_images(images)
     if not text.strip():
         raise ValueError("OCR vuoto — screenshot illeggibili o troppo sfocati")
     return roster_from_ocr_text(text)
+
+
+def roster_from_input(
+    *,
+    images: list[bytes] | None = None,
+    pasted_text: str = "",
+) -> MatchRoster:
+    """Unified entry: pasted text (best fallback) or screenshot vision/OCR."""
+    text = pasted_text.strip()
+    if text:
+        return roster_from_ocr_text(text)
+    if images:
+        return roster_from_screenshots(images)
+    raise ValueError("Carica screenshot FM oppure incolla il testo roster")

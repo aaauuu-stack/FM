@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from odds.api_client import get_api_key, load_env_file, _project_root
 from odds.memory_cache import warm_all_caches
 from odds.request_cache import clear_request_cache
-from players.screen_parse import roster_from_screenshots
+from players.screen_parse import roster_from_input
 from predict.analyze import analyze_match_from_roster
 from predict.timing import reset_timings, timed, timing_summary, elapsed_total
 from web.html_render import render_analysis
@@ -63,6 +63,16 @@ input[type=file] {
   color: var(--text);
   padding: 1rem;
   font: inherit;
+}
+textarea.roster-text {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.75rem;
+  font: inherit;
+  min-height: 7rem;
+  resize: vertical;
 }
 .upload-hint { color: var(--muted); font-size: 0.85rem; margin: 0; }
 .checks { display: flex; flex-wrap: wrap; gap: 1rem; }
@@ -145,6 +155,7 @@ def _form_html(
     refresh: bool = False,
     no_oddspapi: bool | None = None,
     no_scrape: bool | None = None,
+    roster_text: str = "",
     error: str = "",
 ) -> str:
     if no_scrape is None:
@@ -154,16 +165,19 @@ def _form_html(
     err = f'<div class="error">{_esc(error)}</div>' if error else ""
     return f"""
 {err}
-<form method="post" action="/predict" enctype="multipart/form-data">
+<form method="post" action="/predict" enctype="multipart/form-data" id="predict-form">
   <label>Screenshot FM (partita + bonus giocatori)
-    <input type="file" name="screenshots" accept="image/*" multiple required>
+    <input type="file" name="screenshots" accept="image/*" multiple>
   </label>
   <p class="upload-hint">
-    Carica 1–5 screen dall'app Fantamondiale (ordine libero).
-    Almeno uno deve mostrare il banner partita in alto (es. Uzbekistan – Colombia);
-    gli altri possono essere scroll con più giocatori.
+    Carica 1–4 screen dall'app Fantamondiale, oppure incolla il testo sotto.
+    Con <strong>OPENAI_API_KEY</strong> configurata, gli screenshot vengono letti
+    con vision AI (come ChatGPT) — veloce e accurato.
   </p>
-  {"<p class='upload-hint'>Analisi ~30–90 sec su cloud. Usa 2–3 screenshot nitidi (banner + giocatori).</p>" if IS_RENDER else ""}
+  <label>Testo roster (alternativa agli screenshot)
+    <textarea class="roster-text" name="roster_text" placeholder="Incolla qui il testo letto da ChatGPT o dall'app…&#10;Es: UZBEKISTAN - COLOMBIA&#10;Portieri&#10;ERGASHEV +14  MONTERO +5">{_esc(roster_text)}</textarea>
+  </label>
+  {"<p class='upload-hint'>Analisi quote ~30–60 sec su cloud dopo la lettura roster.</p>" if IS_RENDER else ""}
   <div class="checks">
     <label><input type="checkbox" name="refresh" value="1"{" checked" if refresh else ""}> Refresh quote (API live)</label>
     <label><input type="checkbox" name="no_oddspapi" value="1"{" checked" if no_oddspapi else ""}> Salta OddsPapi</label>
@@ -173,10 +187,17 @@ def _form_html(
 </form>
 <p class="meta" style="margin-top:1rem">Usa cache di default — spunta Refresh solo quando vuoi aggiornare le quote.</p>
 <script>
-document.querySelector('form').addEventListener('submit', function() {{
+document.getElementById('predict-form').addEventListener('submit', function(e) {{
+  const files = document.querySelector('input[name="screenshots"]').files;
+  const text = document.querySelector('textarea[name="roster_text"]').value.trim();
+  if (!files.length && !text) {{
+    e.preventDefault();
+    alert('Carica almeno uno screenshot oppure incolla il testo roster.');
+    return;
+  }}
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
-  btn.textContent = 'Analisi in corso (30–90 sec)…';
+  btn.textContent = text ? 'Analisi in corso…' : 'Lettura screenshot + analisi…';
 }});
 </script>
 """
@@ -194,6 +215,7 @@ def _startup() -> None:
 def _run_analysis(
     blobs: list[bytes],
     *,
+    pasted_text: str = "",
     refresh: bool,
     use_oddspapi: bool,
     use_scrape: bool,
@@ -201,10 +223,10 @@ def _run_analysis(
     reset_timings()
     clear_request_cache()
     started = time.perf_counter()
-    with timed("ocr"):
-        roster = roster_from_screenshots(blobs)
+    with timed("lettura_roster"):
+        roster = roster_from_input(images=blobs or None, pasted_text=pasted_text)
     logger.info(
-        "OCR ok: %s vs %s, %d giocatori",
+        "Roster ok: %s vs %s, %d giocatori",
         roster.home,
         roster.away,
         len(roster.players),
@@ -244,6 +266,7 @@ async def index() -> HTMLResponse:
 async def predict(
     screenshots: list[UploadFile] = File(default=[]),
     screenshot: UploadFile | None = File(default=None),
+    roster_text: str = Form(""),
     refresh: str = Form(""),
     no_oddspapi: str = Form(""),
     no_scrape: str = Form(""),
@@ -264,13 +287,14 @@ async def predict(
         uploads.append(screenshot)
     blobs = await _read_uploads(uploads)
 
-    if not blobs:
+    if not blobs and not roster_text.strip():
         return HTMLResponse(
             _page(
                 _form_html(
-                    error="Nessuna immagine caricata.",
+                    error="Carica screenshot FM oppure incolla il testo roster.",
                     refresh=do_refresh,
                     no_scrape=skip_scrape_checked,
+                    roster_text=roster_text,
                 )
             )
         )
@@ -280,6 +304,7 @@ async def predict(
             asyncio.to_thread(
                 _run_analysis,
                 blobs,
+                pasted_text=roster_text.strip(),
                 refresh=do_refresh,
                 use_oddspapi=use_oddspapi,
                 use_scrape=use_scrape,
@@ -295,12 +320,13 @@ async def predict(
                     error=(
                         f"Analisi troppo lenta ({elapsed:.0f}s, limite 5 min). "
                         f"Timing parziale: {diag}. "
-                        "Su cloud usa 2–3 screenshot nitidi (banner partita + scroll giocatori). "
-                        "Se quote/API è lento: riprova senza Refresh."
+                        "Se quote/API è lento: riprova senza Refresh. "
+                        "In alternativa incolla il testo roster invece degli screenshot."
                     ),
                     refresh=do_refresh,
                     no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,
+                    roster_text=roster_text,
                 )
             )
         )
@@ -312,6 +338,7 @@ async def predict(
                     refresh=do_refresh,
                     no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,
+                    roster_text=roster_text,
                 )
             )
         )
@@ -324,6 +351,7 @@ async def predict(
                     refresh=do_refresh,
                     no_oddspapi=skip_oddspapi_checked,
                     no_scrape=skip_scrape_checked,
+                    roster_text=roster_text,
                 )
             )
         )
@@ -342,6 +370,7 @@ async def predict(
         refresh=do_refresh,
         no_oddspapi=skip_oddspapi_checked,
         no_scrape=skip_scrape_checked,
+        roster_text=roster_text,
     )
     return HTMLResponse(
         _page(result_html + back, title=f"{analysis.home} vs {analysis.away}")

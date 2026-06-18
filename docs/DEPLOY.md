@@ -11,8 +11,11 @@ Per un link gratuito consigliamo **Render** (free tier) o **Railway** (crediti t
 3. Se usi Blueprint, Render legge `render.yaml` in root.
 4. In **Environment** imposta:
    - `ODDS_API_KEY` — da [the-odds-api.com](https://the-odds-api.com/)
+   - `OPENAI_API_KEY` — **lettura screenshot** (vision AI, come ChatGPT) da [platform.openai.com](https://platform.openai.com/)
    - `ODDSPAPI_API_KEY` — opzionale, da [oddspapi.io](https://oddspapi.io/)
 5. Deploy → otterrai un URL tipo `https://fantamondiale-xxxx.onrender.com`.
+
+**Lettura roster:** Tesseract non funziona bene sugli screenshot FM. Su cloud serve `OPENAI_API_KEY` (gpt-4o-mini, ~$0.01/analisi) oppure incolla il testo roster nel form web.
 
 **Nota free tier:** il servizio si **addormenta** dopo ~15 min senza visite (prima richiesta lenta). La cache quote su disco **non persiste** tra redeploy — usa Refresh solo quando serve.
 
@@ -40,6 +43,7 @@ Railway usa `Dockerfile` e `railway.toml` già presenti.
 | Variabile | Obbligatoria | Descrizione |
 |-----------|--------------|-------------|
 | `ODDS_API_KEY` | Sì | The Odds API |
+| `OPENAI_API_KEY` | Sì (cloud) | Vision AI per screenshot FM |
 | `ODDSPAPI_API_KEY` | No | Correct score / props |
 | `ODDS_REGION` | No | Default `eu` |
 | `ODDS_SPORT` | No | Default `soccer_fifa_world_cup` |

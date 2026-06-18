@@ -16,6 +16,8 @@ services:
         sync: false
       - key: ODDSPAPI_API_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
       - key: ODDS_REGION
         value: eu
       - key: ODDS_SPORT
