@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -14,20 +15,13 @@ from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
 HOME_COL_MARKER = "__HOME_COL__"
 AWAY_COL_MARKER = "__AWAY_COL__"
 
-# Resize + Tesseract tuning (server-side speed)
-OCR_MAX_SIDE = 1200
+# One Tesseract pass per screenshot (Render: ~10x faster than multi-region).
+OCR_MAX_SIDE = 720 if os.environ.get("RENDER") else 960
 _OCR_MAX_CONCURRENT = 3
 _ocr_semaphore = threading.Semaphore(_OCR_MAX_CONCURRENT)
-_PLAYER_COL_WHITELIST = (
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    "0123456789+-. "
-    "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ"
-    "✓✔☑"
-)
-_BANNER_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZ-–— "
 _BANNER_MIN_BRIGHTNESS = 160
-_BANNER_UPSCALE_WIDTH = 900
 _BANNER_MIN_SCORE = 900.0
+_TESSERACT_CONFIG = "--psm 6 --oem 0"
 
 
 def _default_match_id(home: str, away: str) -> str:
@@ -44,7 +38,6 @@ SECTION_ROLE: list[tuple[re.Pattern[str], str]] = [
 
 VICE_PATTERN = re.compile(r"[✓✔☑●◉◎]|vice", re.I)
 BONUS_PATTERN = re.compile(r"\+(\d{1,2})")
-# NOME +bonus (FM app: ERGASHEV +14, SUAREZ L. +5)
 PLAYER_BONUS_RE = re.compile(
     r"([A-ZÀ-ÖØ-öø-ÿ][A-ZÀ-ÖØ-öø-ÿ\s.'·-]{0,26}?)\s+\+(\d{1,2})",
     re.I,
@@ -106,15 +99,16 @@ def _prepare_gray_image(data: bytes):
     image = ImageOps.exif_transpose(image)
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
-    max_side = OCR_MAX_SIDE
     width, height = image.size
-    if max(width, height) > max_side:
-        scale = max_side / max(width, height)
+    if max(width, height) > OCR_MAX_SIDE:
+        scale = OCR_MAX_SIDE / max(width, height)
+        resample = Image.Resampling.BILINEAR if os.environ.get("RENDER") else Image.Resampling.LANCZOS
         image = image.resize(
             (max(1, int(width * scale)), max(1, int(height * scale))),
-            Image.Resampling.LANCZOS,
+            resample,
         )
-    return image, image.convert("L")
+    gray = image.convert("L")
+    return image, ImageOps.autocontrast(gray)
 
 
 def _row_brightness(gray, y: int) -> float:
@@ -144,37 +138,6 @@ def _banner_strip_score(gray) -> float:
     return best
 
 
-def _detect_banner_box(gray) -> tuple[int, int, int, int]:
-    """Locate the bright FM match banner (e.g. UZBEKISTAN - COLOMBIA)."""
-    width, height = gray.size
-    scan_h = int(height * 0.32)
-    y = 0
-    best: tuple[int, int, float] | None = None
-
-    while y < scan_h:
-        while y < scan_h and _row_brightness(gray, y) < _BANNER_MIN_BRIGHTNESS:
-            y += 1
-        start = y
-        while y < scan_h and _row_brightness(gray, y) >= _BANNER_MIN_BRIGHTNESS - 15:
-            y += 1
-        end = y
-        band_h = end - start
-        if band_h >= 6:
-            avg = sum(_row_brightness(gray, row_y) for row_y in range(start, end)) / band_h
-            score = band_h * avg
-            if best is None or score > best[2]:
-                best = (start, end, score)
-
-    if best is not None:
-        top = max(0, best[0] - 2)
-        bottom = min(height, best[1] + 2)
-        return (0, top, width, bottom)
-
-    top = int(height * 0.11)
-    bottom = int(height * 0.19)
-    return (0, top, width, bottom)
-
-
 def _pick_banner_image_index(blobs: list[bytes]) -> int | None:
     """Index of the screenshot most likely to contain the match banner."""
     if not blobs:
@@ -186,53 +149,19 @@ def _pick_banner_image_index(blobs: list[bytes]) -> int | None:
     return best_idx
 
 
-def _prepare_banner_for_ocr(crop):
-    from PIL import Image, ImageOps
-
-    crop = ImageOps.autocontrast(crop)
-    width, height = crop.size
-    if width < _BANNER_UPSCALE_WIDTH:
-        scale = _BANNER_UPSCALE_WIDTH / width
-        crop = crop.resize(
-            (int(width * scale), max(1, int(height * scale))),
-            Image.Resampling.LANCZOS,
-        )
-    return crop
-
-
-def _ocr_region(
-    gray,
-    box,
-    *,
-    psm: int = 6,
-    lang: str = "ita+eng",
-    whitelist: str | None = None,
-    enhance: bool = False,
-    banner: bool = False,
-) -> str:
+def _ocr_single_pass(gray) -> str:
+    """One Tesseract invocation for the full screenshot."""
     import pytesseract
-    from PIL import ImageOps
 
-    crop = gray.crop(box)
-    if banner:
-        crop = _prepare_banner_for_ocr(crop)
-    elif enhance:
-        crop = ImageOps.autocontrast(crop)
-    config_parts = [f"--psm {psm}", "--oem 1"]
-    if whitelist:
-        config_parts.append(f"-c tessedit_char_whitelist={whitelist}")
-    config = " ".join(config_parts)
     with _ocr_semaphore:
         try:
-            return pytesseract.image_to_string(crop, lang=lang, config=config)
+            return pytesseract.image_to_string(gray, lang="eng", config=_TESSERACT_CONFIG)
         except pytesseract.TesseractError:
-            if lang != "eng":
-                return pytesseract.image_to_string(crop, lang="eng", config=config)
-            raise
+            return pytesseract.image_to_string(gray, lang="eng", config="--psm 6 --oem 0")
 
 
 def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
-    """OCR FM screenshot: header banner + left (home) + right (away) columns."""
+    """OCR one FM screenshot in a single Tesseract pass."""
     try:
         import pytesseract  # noqa: F401
     except ImportError as exc:
@@ -244,74 +173,7 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
         raise ValueError("Screenshot troppo grande (max 5 MB ciascuno)")
 
     _image, gray = _prepare_gray_image(data)
-    width, height = gray.size
-
-    banner_box = _detect_banner_box(gray) if include_header else None
-    if include_header and banner_box is not None:
-        body_top = min(height, banner_box[3] + max(8, int(height * 0.01)))
-        header_h = max(banner_box[3] + 4, int(height * 0.12))
-    else:
-        body_top = int(height * 0.02)
-        header_h = int(height * 0.12)
-    mid = width // 2
-    gutter = max(8, width // 40)
-
-    jobs: list[tuple[str, tuple[int, int, int, int], int, str, str | None, bool, bool]] = []
-    if include_header and banner_box is not None:
-        jobs.append(("header", (0, 0, width, header_h), 7, "ita+eng", None, False, False))
-        jobs.append(("banner", banner_box, 7, "eng", _BANNER_WHITELIST, False, True))
-    jobs.extend(
-        [
-            (
-                "home",
-                (0, body_top, mid - gutter, height),
-                6,
-                "eng",
-                _PLAYER_COL_WHITELIST,
-                False,
-                False,
-            ),
-            (
-                "away",
-                (mid + gutter, body_top, width, height),
-                6,
-                "eng",
-                _PLAYER_COL_WHITELIST,
-                False,
-                False,
-            ),
-        ]
-    )
-
-    results: dict[str, str] = {}
-    workers = min(_OCR_MAX_CONCURRENT, len(jobs))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            name: pool.submit(
-                _ocr_region,
-                gray,
-                box,
-                psm=psm,
-                lang=lang,
-                whitelist=wl,
-                enhance=enh,
-                banner=is_banner,
-            )
-            for name, box, psm, lang, wl, enh, is_banner in jobs
-        }
-        for name, future in futures.items():
-            results[name] = future.result().strip()
-
-    header_parts = [results.get("header", ""), results.get("banner", "")]
-    header_text = "\n".join(part for part in header_parts if part)
-    home_col = results.get("home", "")
-    away_col = results.get("away", "")
-
-    return (
-        (f"{header_text}\n" if header_text else "")
-        + f"{HOME_COL_MARKER}\n{home_col}\n"
-        f"{AWAY_COL_MARKER}\n{away_col}"
-    )
+    return _ocr_single_pass(gray).strip()
 
 
 def ocr_images(images: list[bytes]) -> str:
@@ -322,14 +184,18 @@ def ocr_images(images: list[bytes]) -> str:
         return ""
 
     banner_idx = _pick_banner_image_index(blobs)
-    ocr_all_headers = banner_idx is None
+    workers = min(_OCR_MAX_CONCURRENT, len(blobs))
 
     indexed: list[tuple[int, str]] = []
-    for i, blob in enumerate(blobs):
-        with_header = ocr_all_headers or i == banner_idx
-        text = ocr_image_bytes(blob, include_header=with_header).strip()
-        if text:
-            indexed.append((i, text))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            i: pool.submit(ocr_image_bytes, blob, include_header=True)
+            for i, blob in enumerate(blobs)
+        }
+        for i, future in futures.items():
+            text = future.result().strip()
+            if text:
+                indexed.append((i, text))
 
     if not indexed:
         return ""
@@ -432,7 +298,7 @@ def _clean_player_name(raw: str) -> str:
         return ""
     parts = name.split()
     if len(parts) >= 2 and len(parts[-1]) <= 2 and parts[-1].replace(".", "").isalpha():
-        pass  # keep suffix e.g. "L." in Suarez L.
+        pass
     return name.upper() if name.isupper() else _format_player_name(name)
 
 

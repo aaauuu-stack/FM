@@ -136,7 +136,7 @@ def test_pick_banner_image_index():
 
     from PIL import Image
 
-    from players.screen_parse import _pick_banner_image_index
+    from players.screen_parse import _banner_strip_score, _pick_banner_image_index
 
     def _blob_with_band(y0: int, y1: int) -> bytes:
         img = Image.new("L", (400, 800), color=20)
@@ -152,55 +152,37 @@ def test_pick_banner_image_index():
     assert _pick_banner_image_index([scroll, banner, scroll]) == 1
 
 
-def test_ocr_images_header_on_detected_banner_only():
+def test_ocr_images_parallel_puts_banner_first():
     from unittest.mock import patch
 
     from players.screen_parse import ocr_images
 
-    calls: list[bool] = []
+    seen: list[bytes] = []
 
-    def _fake(_data: bytes, *, include_header: bool = True) -> str:
-        calls.append(include_header)
-        return f"chunk-{len(calls)}-hdr={include_header}"
+    def _fake(data: bytes, *, include_header: bool = True) -> str:
+        seen.append(data)
+        return f"part-{data.decode()}"
 
     with patch("players.screen_parse._pick_banner_image_index", return_value=1):
         with patch("players.screen_parse.ocr_image_bytes", side_effect=_fake):
-            merged = ocr_images([b"a", b"b", b"c"])
+            merged = ocr_images([b"a", b"banner", b"c"])
 
-    assert calls == [False, True, False]
-    assert merged.startswith("chunk-2-hdr=True")
-
-
-def test_ocr_images_banner_only_on_first():
-    from unittest.mock import patch
-
-    from players.screen_parse import ocr_images
-
-    calls: list[bool] = []
-
-    def _fake(_data: bytes, *, include_header: bool = True) -> str:
-        calls.append(include_header)
-        return f"chunk hdr={include_header}"
-
-    with patch("players.screen_parse._pick_banner_image_index", return_value=0):
-        with patch("players.screen_parse.ocr_image_bytes", side_effect=_fake):
-            ocr_images([b"a", b"b", b"c"])
-
-    assert calls == [True, False, False]
+    assert len(seen) == 3
+    assert merged.startswith("part-banner")
+    assert "part-a" in merged
+    assert "part-c" in merged
 
 
-def test_detect_banner_box_finds_bright_horizontal_band():
+def test_banner_strip_score_prefers_bright_band():
     from PIL import Image
 
-    from players.screen_parse import _detect_banner_box
+    from players.screen_parse import _BANNER_MIN_SCORE, _banner_strip_score
 
     img = Image.new("L", (400, 800), color=20)
     for y in range(96, 144):
         for x in range(400):
             img.putpixel((x, y), 235)
-    _, top, _, bottom = _detect_banner_box(img)
-    assert 90 <= top <= 100
-    assert 140 <= bottom <= 150
+    assert _banner_strip_score(img) > _BANNER_MIN_SCORE
 
 
 def test_extract_match_without_dash_separator():

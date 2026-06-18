@@ -163,7 +163,7 @@ def _form_html(
     Almeno uno deve mostrare il banner partita in alto (es. Uzbekistan – Colombia);
     gli altri possono essere scroll con più giocatori.
   </p>
-  {"<p class='upload-hint'>Analisi ~30–90 sec su cloud (tutte le fonti). Non chiudere la pagina.</p>" if IS_RENDER else ""}
+  {"<p class='upload-hint'>Analisi ~30–90 sec su cloud. Meno screenshot = più veloce (OCR ~10–30s con 1–3 screen).</p>" if IS_RENDER else ""}
   <div class="checks">
     <label><input type="checkbox" name="refresh" value="1"{" checked" if refresh else ""}> Refresh quote (API live)</label>
     <label><input type="checkbox" name="no_oddspapi" value="1"{" checked" if no_oddspapi else ""}> Salta OddsPapi</label>
