@@ -18,6 +18,7 @@ from odds.scrape_sofascore_players import (
     extract_first_card_from_sofa_markets,
     extract_goalscorer_from_sofa_markets,
 )
+from odds.sofascore_event_lookup import lookup_sofascore_event_id
 
 
 @dataclass
@@ -93,7 +94,7 @@ def fetch_sofascore_bundle(
     No calendario, no metadati evento, no stats NT.
     """
     bundle = SofaScoreBundle()
-    resolved_id = event_id or sofascore_event_id_from_oddspapi(
+    resolved_id = event_id or lookup_sofascore_event_id(
         home_query, away_query, kickoff_iso
     )
     if resolved_id is None:

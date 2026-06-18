@@ -1,6 +1,7 @@
 """Tests for player name matching and Poisson goal estimates."""
 
 from odds.goalscorer import attach_poisson_goal_estimates
+from scoring.lineup_points import compute_player_ev
 from players.name_match import normalize_player, players_match
 from odds.match_loader import MatchData, MatchOdds
 from players.models import MatchRoster, PlayerBonus
@@ -98,6 +99,52 @@ def test_poisson_low_bonus_fwd_gets_higher_p_goal():
     starter = next(p for p in updated.players if p.name == "Starter")
     backup = next(p for p in updated.players if p.name == "Backup")
     assert float(starter.p_goal or 0) > float(backup.p_goal or 0)
+
+
+def test_gk_clean_sheet_when_bonus_cs_missing():
+    """Hadzikic-style: vision puts +6 only in bonus_goal — CS EV must still count."""
+    from scoring.lineup_rules import gk_clean_sheet_bonus
+
+    gk = PlayerBonus(
+        "Hadzikic",
+        "away",
+        "GK",
+        bonus_goal=6,
+        bonus_clean_sheet=0,
+        starter=True,
+        p_clean_sheet=0.14,
+    )
+    assert gk_clean_sheet_bonus(gk) == 6
+    ev = compute_player_ev(gk)
+    assert ev.ev_clean_sheet > 0
+    assert "clean_sheet" in ev.breakdown
+
+
+def test_finalize_goalkeeper_bonuses():
+    from players.roster_normalize import finalize_goalkeeper_bonuses
+
+    players = finalize_goalkeeper_bonuses(
+        [PlayerBonus("Hadzikic", "away", "GK", bonus_goal=6, bonus_clean_sheet=0)]
+    )
+    assert players[0].bonus_clean_sheet == 6
+
+
+def test_goalscorer_no_match_preserves_existing_p_goal():
+    from odds.goalscorer import apply_goalscorer_probs
+
+    roster = MatchRoster(
+        "T",
+        "Home",
+        "Away",
+        players=[
+            PlayerBonus("Striker", "home", "FWD", p_goal=0.25),
+            PlayerBonus("Other", "home", "FWD", p_goal=0.0),
+        ],
+    )
+    probs = {"Unknown Player": 0.40}
+    updated, note = apply_goalscorer_probs(roster, probs)
+    striker = next(p for p in updated.players if p.name == "Striker")
+    assert striker.p_goal == 0.25
 
 
 def test_attach_event_probs_fills_malus_fields():

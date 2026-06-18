@@ -60,7 +60,9 @@ def apply_goalscorer_probs(
         row = player.with_probs(p_goal=p_goal)
         if hit:
             row = replace(row, book_goal_matched=True)
-        updated.append(row)
+            updated.append(row)
+        else:
+            updated.append(player)
 
     roster.players = updated
     return roster, f"goalscorer API ({matched}/{len(roster.players)} matched)"

@@ -28,6 +28,9 @@ def players_match(fm_name: str, api_name: str) -> bool:
     api_tokens = api.split()
     if fm_tokens[-1] == api_tokens[-1]:
         return True
+    # FM "Rodriguez R." vs API "R. Rodriguez"
+    if len(fm_tokens) == 1 and api_tokens and fm_tokens[0] == api_tokens[-1]:
+        return True
     if fm in api or api in fm:
         return True
     return False

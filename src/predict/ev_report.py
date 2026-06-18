@@ -140,7 +140,7 @@ def lineup_recommendation_to_report(
                 "gol_azione": pev.player.bonus_goal,
                 "gol_rigore": 3,
                 "gol_portiere": 10,
-                "clean_sheet": pev.player.bonus_clean_sheet or 1,
+                "clean_sheet": gk_clean_sheet_bonus(pev.player) if pev.player.is_goalkeeper else (pev.player.bonus_clean_sheet or 1),
                 "rigore_parato": 4,
             }
             prob_map = {

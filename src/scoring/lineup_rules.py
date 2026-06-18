@@ -18,6 +18,15 @@ MALUS_PENALTY_MISSED = -3
 VICE_MIN_BONUS_GOAL = 5
 LINEUP_SIZE = 4
 
+
+def gk_clean_sheet_bonus(player) -> int:
+    """Payoff porta inviolata GK — bonus_clean_sheet from app, fallback to bonus_goal if omitted."""
+    if not player.is_goalkeeper:
+        return 0
+    if player.bonus_clean_sheet > 0:
+        return player.bonus_clean_sheet
+    return max(player.bonus_goal, 0)
+
 # Pronostici evento daily (§8.2 — etichette §7.5)
 PAYOFF_FIRST_SUB = 5  # K
 PAYOFF_FIRST_CARD = 4  # L

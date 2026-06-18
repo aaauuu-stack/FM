@@ -108,6 +108,46 @@ def fetch_event_starter_names(event_id: int) -> tuple[set[str], set[str]]:
     )
 
 
+def _sofascore_player_name_variants(player: dict) -> set[str]:
+    """All name forms useful to match FM roster (Kobel ↔ G. Kobel)."""
+    names: set[str] = set()
+    for key in ("name", "shortName"):
+        raw = str(player.get(key) or "").strip()
+        if raw:
+            names.add(raw)
+            parts = raw.replace(".", " ").split()
+            if parts:
+                names.add(parts[-1])
+    return names
+
+
+def _starters_from_lineups(lineups: dict, side_key: str) -> set[str]:
+    side = lineups.get(side_key) or {}
+    names: set[str] = set()
+    for entry in side.get("players") or []:
+        if not isinstance(entry, dict) or entry.get("substitute") is True:
+            continue
+        player = entry.get("player") or {}
+        names.update(_sofascore_player_name_variants(player))
+    return names
+
+
+def _fetch_predicted_lineups(event_id: int) -> dict | None:
+    url = f"https://api.sofascore.com/api/v1/event/{event_id}/predicted-lineups"
+    try:
+        result = fetch_json(
+            url,
+            cache_name=f"sofascore_predicted_lineups_{event_id}.json",
+            extra_headers=_sofascore_headers(),
+        )
+        data = result.data
+        if data.get("home") or data.get("away"):
+            return data
+    except RuntimeError:
+        pass
+    return None
+
+
 def _fetch_lineups(event_id: int) -> dict | None:
     url = f"https://api.sofascore.com/api/v1/event/{event_id}/lineups"
     try:
@@ -116,12 +156,14 @@ def _fetch_lineups(event_id: int) -> dict | None:
             cache_name=f"sofascore_lineups_{event_id}.json",
             extra_headers=_sofascore_headers(),
         )
-        return result.data
+        data = result.data
+        home = (data.get("home") or {}).get("players") or []
+        away = (data.get("away") or {}).get("players") or []
+        if home or away:
+            return data
     except RuntimeError:
-        return None
-
-
-def _fetch_incidents(event_id: int) -> list[dict]:
+        pass
+    return _fetch_predicted_lineups(event_id)
     url = f"https://api.sofascore.com/api/v1/event/{event_id}/incidents"
     try:
         result = fetch_json(
@@ -134,20 +176,7 @@ def _fetch_incidents(event_id: int) -> list[dict]:
         return []
 
 
-def _starters_from_lineups(lineups: dict, side_key: str) -> set[str]:
-    side = lineups.get(side_key) or {}
-    names: set[str] = set()
-    for entry in side.get("players") or []:
-        if not isinstance(entry, dict) or entry.get("substitute") is True:
-            continue
-        player = entry.get("player") or {}
-        name = str(player.get("name") or player.get("shortName") or "").strip()
-        if name:
-            names.add(name)
-    return names
-
-
-def _first_sub_out_by_side(incidents: list[dict]) -> dict[str, str | None]:
+def _fetch_incidents(event_id: int) -> list[dict]:
     found: dict[str, str | None] = {"home": None, "away": None}
     sorted_inc = sorted(incidents, key=lambda x: int(x.get("time") or 999))
     for inc in sorted_inc:

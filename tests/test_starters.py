@@ -56,8 +56,95 @@ def test_bench_gk_zero_ev():
     assert compute_player_ev(bench).ev_total == 0.0
 
 
+def test_sofa_complete_lineup_excludes_backup_gk():
+    """Con XI SofaScore completo, portiere backup (Keller) non è titolare."""
+    from unittest.mock import patch
+
+    from players.starters import infer_starters
+
+    sofa_home = {
+        "G. Kobel",
+        "Kobel",
+        "R. Rodríguez",
+        "Rodriguez",
+        "M. Akanji",
+        "Akanji",
+        "N. Elvedi",
+        "Elvedi",
+        "R. Freuler",
+        "Freuler",
+        "G. Xhaka",
+        "Xhaka",
+        "R. Vargas",
+        "Vargas",
+        "B. Embolo",
+        "Embolo",
+        "D. Ndoye",
+        "Ndoye",
+        "M. Aebischer",
+        "Aebischer",
+        "D. Zakaria",
+        "Zakaria",
+    }
+    sofa_away = {
+        "N. Vasilj",
+        "Vasilj",
+        "A. Dedić",
+        "Dedic",
+        "S. Kolašinac",
+        "Kolasinac",
+        "E. Demirović",
+        "Demirovic",
+        "J. Lukić",
+        "Lukic",
+        "N. Katić",
+        "Katic",
+        "T. Muharemović",
+        "Muharemovic",
+        "E. Bajraktarević",
+        "Bajraktarevic",
+        "I. Bašić",
+        "Basic",
+        "B. Tahirović",
+        "Tahirovic",
+        "A. Memić",
+        "Memic",
+    }
+    players = [
+        PlayerBonus("Keller", "home", "GK", bonus_goal=5, bonus_clean_sheet=6),
+        PlayerBonus("Kobel", "home", "GK", bonus_goal=5, bonus_clean_sheet=5),
+        PlayerBonus("Embolo", "home", "FWD", bonus_goal=5),
+        PlayerBonus("Amdouni", "home", "FWD", bonus_goal=7),
+        PlayerBonus("Vargas R.", "home", "MID", bonus_goal=7),
+        PlayerBonus("Rodriguez R.", "home", "DEF", bonus_goal=9),
+        PlayerBonus("Ndoye", "home", "MID", bonus_goal=6, vice_allenatore=True),
+        PlayerBonus("Hadzikic", "away", "GK", bonus_goal=6, bonus_clean_sheet=6),
+        PlayerBonus("Vasilj", "away", "GK", bonus_goal=6, bonus_clean_sheet=6),
+        PlayerBonus("Dedic", "away", "DEF", bonus_goal=8),
+        PlayerBonus("Tabakovic", "away", "FWD", bonus_goal=12),
+    ]
+    roster = MatchRoster("T", "Svizzera", "Bosnia", players=players)
+    with patch(
+        "players.starters.fetch_event_starter_names",
+        return_value=(sofa_home, sofa_away),
+    ):
+        updated, note = infer_starters(roster, sofascore_event_id=12345)
+
+    keller = next(p for p in updated.players if p.name == "Keller")
+    kobel = next(p for p in updated.players if p.name == "Kobel")
+    amdouni = next(p for p in updated.players if p.name == "Amdouni")
+    hadzikic = next(p for p in updated.players if p.name == "Hadzikic")
+    vasilj = next(p for p in updated.players if p.name == "Vasilj")
+
+    assert not keller.starter
+    assert kobel.starter
+    assert not amdouni.starter
+    assert not hadzikic.starter
+    assert vasilj.starter
+    assert "SofaScore formazioni" in note
+
+
 def test_card_quote_does_not_mark_starter():
-    """Quote cartellini ≠ titolare: solo euristica/SofaScore, non il book cartellini."""
     players = [
         PlayerBonus(name="Keller", side="home", role="GK", bonus_goal=5, bonus_clean_sheet=5),
         PlayerBonus(name="Kobel", side="home", role="GK", bonus_goal=5, bonus_clean_sheet=5),

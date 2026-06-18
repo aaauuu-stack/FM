@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from odds.scrape_sofascore_subs import fetch_event_starter_names
+from odds.sofascore_event_lookup import min_sofa_xi_per_side
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
 
@@ -56,11 +57,24 @@ def _heuristic_xi(side_players: list[PlayerBonus]) -> set[str]:
         if need == 0:
             continue
         pool = [p for p in in_role if p.name not in chosen]
-        # Bonus FM basso ≈ titolare probabile (regolamento FM)
         pool.sort(key=lambda p: p.bonus_goal)
         for player in pool[:need]:
             chosen.add(player.name)
     return chosen
+
+
+def _mark_sofa_starters(
+    players: list[PlayerBonus],
+    home_names: set[str],
+    away_names: set[str],
+) -> None:
+    for i, player in enumerate(players):
+        if player.vice_allenatore:
+            players[i] = replace(player, starter=True)
+            continue
+        side_names = home_names if player.side == "home" else away_names
+        if side_names and _matches_any(player.name, side_names):
+            players[i] = replace(player, starter=True)
 
 
 def infer_starters(
@@ -73,38 +87,46 @@ def infer_starters(
 
     Sources (in order):
     1. SofaScore predicted/confirmed lineups for this fixture
-    2. Heuristic XI by role + FM bonus (low bonus ≈ more likely starter)
+    2. Heuristic XI by role + FM bonus — only if SofaScore missing/incomplete for that side
     Vice allenatore is always treated as starter.
-
-    Quote cartellini/gol NON influenzano i titolari — servono solo per EV/malus.
     """
     players = [replace(p, starter=False) for p in roster.players]
     notes: list[str] = []
+    min_xi = min_sofa_xi_per_side()
 
     home_names: set[str] = set()
     away_names: set[str] = set()
     if sofascore_event_id:
         home_names, away_names = fetch_event_starter_names(sofascore_event_id)
-        if home_names or away_names:
-            notes.append("SofaScore formazioni")
 
-    for i, player in enumerate(players):
-        if player.vice_allenatore:
-            players[i] = replace(player, starter=True)
-            continue
-        side_names = home_names if player.side == "home" else away_names
-        if side_names and _matches_any(player.name, side_names):
-            players[i] = replace(player, starter=True)
+    _mark_sofa_starters(players, home_names, away_names)
 
-    if not notes:
-        notes.append("euristica ruolo+bonus FM")
+    home_sofa_ok = len(home_names) >= min_xi
+    away_sofa_ok = len(away_names) >= min_xi
 
-    for side in ("home", "away"):
-        side_players = [p for p in players if p.side == side]
-        xi_names = _heuristic_xi(side_players)
-        for i, player in enumerate(players):
-            if player.side == side and player.name in xi_names:
-                players[i] = replace(player, starter=True)
+    if home_sofa_ok and away_sofa_ok:
+        notes.append(f"SofaScore formazioni ({len(home_names)}/{len(away_names)} titolari)")
+    elif home_names or away_names:
+        notes.append("SofaScore parziale + euristica")
+        for side, sofa_ok, side_names in (
+            ("home", home_sofa_ok, home_names),
+            ("away", away_sofa_ok, away_names),
+        ):
+            if sofa_ok:
+                continue
+            side_players = [p for p in players if p.side == side]
+            xi_names = _heuristic_xi(side_players)
+            for i, player in enumerate(players):
+                if player.side == side and player.name in xi_names:
+                    players[i] = replace(player, starter=True)
+    else:
+        notes.append("euristica ruolo+bonus FM (SofaScore non disponibile)")
+        for side in ("home", "away"):
+            side_players = [p for p in players if p.side == side]
+            xi_names = _heuristic_xi(side_players)
+            for i, player in enumerate(players):
+                if player.side == side and player.name in xi_names:
+                    players[i] = replace(player, starter=True)
 
     _consolidate_gk_starters(players)
 

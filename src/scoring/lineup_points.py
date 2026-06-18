@@ -14,6 +14,7 @@ from scoring.lineup_rules import (
     MALUS_PENALTY_MISSED,
     MALUS_RED,
     MALUS_YELLOW,
+    gk_clean_sheet_bonus,
 )
 
 
@@ -67,8 +68,9 @@ def compute_player_ev(player: PlayerBonus) -> PlayerEv:
         if p_gk_goal <= 0 and float(player.p_goal or 0.0) > 0:
             p_gk_goal = float(player.p_goal or 0.0)
         ev_gk_goal = p_gk_goal * BONUS_GK_GOAL
-        if player.bonus_clean_sheet > 0:
-            ev_clean_sheet = p_cs * player.bonus_clean_sheet
+        cs_bonus = gk_clean_sheet_bonus(player)
+        if cs_bonus > 0:
+            ev_clean_sheet = p_cs * cs_bonus
     else:
         ev_goal_action = p_goal_action * player.bonus_goal
         if player.is_defender:

@@ -11,6 +11,7 @@ import urllib.request
 from typing import Any
 
 from players.models import MatchRoster, PlayerBonus
+from players.roster_normalize import finalize_goalkeeper_bonuses
 from players.screen_parse import _default_match_id, _ensure_single_vice, _validate_roster_sides
 from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
 
@@ -39,6 +40,7 @@ Rules:
 - Section headers: Portieri=GK, Difensori=DEF, Centrocampisti=MID, Attaccanti=FWD.
 - bonus_goal is the +N goal bonus; GK rows may also show clean-sheet bonus.
 - Include every visible player across all screenshots; merge duplicates once.
+- **Portieri (GK):** always set both `bonus_goal` and `bonus_clean_sheet` from the two +N values on each row (e.g. +5 gol, +6 porta inviolata).
 - FM lists the full selectable squad (starters and bench) — do NOT guess who starts.
 - Use Italian display names when shown (e.g. Uzbekistan, Colombia, Inghilterra).
 """
@@ -132,6 +134,7 @@ def roster_from_vision_data(data: dict[str, Any]) -> MatchRoster:
 
     _validate_roster_sides(players)
     _ensure_single_vice(players)
+    players = finalize_goalkeeper_bonuses(players)
 
     return MatchRoster(
         match_id=_default_match_id(home, away),

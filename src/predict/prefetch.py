@@ -13,6 +13,7 @@ from odds.merge_providers import merge_match_data, merge_match_data_fill_gaps, n
 from odds.oddspapi_bundle import OddsPapiBundle, fetch_oddspapi_bundle
 from odds.oddspapi_client import oddspapi_configured
 from odds.sofascore_bundle import SofaScoreBundle, fetch_sofascore_bundle
+from odds.sofascore_event_lookup import lookup_sofascore_event_id
 from players.models import MatchRoster
 from predict.timing import timed
 
@@ -51,16 +52,13 @@ class MatchPrefetch:
 def _fetch_sofa_lite(
     roster: MatchRoster,
     kickoff: str,
+    sofa_id: int | None,
     oddspapi_bundle: OddsPapiBundle | None,
     match,
     *,
     use_scrape: bool,
 ) -> SofaScoreBundle | None:
-    if not use_scrape:
-        return None
-
-    sofa_id = oddspapi_bundle.sofascore_event_id if oddspapi_bundle else None
-    if sofa_id is None:
+    if not use_scrape or sofa_id is None:
         return None
 
     need_cs = needs_correct_score(match.odds)
@@ -155,17 +153,24 @@ def build_match_parallel(
             )
 
         if use_scrape:
+            sofa_id = (
+                oddspapi_bundle.sofascore_event_id if oddspapi_bundle else None
+            ) or lookup_sofascore_event_id(roster.home, roster.away, kickoff)
+            prefetch.sofascore_event_id = sofa_id
             with timed("sofascore_bundle"):
                 try:
                     sofa_bundle = _fetch_sofa_lite(
                         roster,
                         kickoff,
+                        sofa_id,
                         oddspapi_bundle,
                         match,
                         use_scrape=True,
                     )
                 except (RuntimeError, ValueError) as exc:
                     print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
+        elif oddspapi_bundle:
+            prefetch.sofascore_event_id = oddspapi_bundle.sofascore_event_id
 
         if sofa_bundle and sofa_bundle.match_odds:
             match = merge_match_data_fill_gaps(match, sofa_bundle.match_odds)
@@ -175,8 +180,6 @@ def build_match_parallel(
             ):
                 sources.append("SofaScore")
 
-        if oddspapi_bundle:
-            prefetch.sofascore_event_id = oddspapi_bundle.sofascore_event_id
         if oddspapi_bundle and oddspapi_bundle.goal_probs is not None:
             prefetch.oddspapi_props = (
                 oddspapi_bundle.goal_probs,
