@@ -9,6 +9,7 @@ from odds.distribution import ScorelineDistribution
 from predict.lineup_ev import LineupRecommendation
 from predict.event_ev import EventRecommendation
 from predict.result_ev import ResultRecommendation, format_score, most_probable_prediction
+from scoring.lineup_rules import gk_clean_sheet_bonus
 
 
 def _pct(value: float) -> str:
