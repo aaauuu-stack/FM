@@ -114,6 +114,10 @@ def _analyze_with_roster(
     )
     if gk_note:
         starter_note = f"{starter_note}; {gk_note}" if starter_note else gk_note
+    if "SofaScore non disponibile (nessun EV GK)" in starter_note:
+        analysis_warnings = ["Portiere titolare non letto da SofaScore — nessun EV clean sheet GK."]
+    else:
+        analysis_warnings = []
     roster = attach_clean_sheet_probs(roster, match)
     roster = apply_starter_probabilities(roster)
 
@@ -169,6 +173,7 @@ def _analyze_with_roster(
         vice_name=vice.name if vice else None,
         vice_bonus=vice.bonus_goal if vice else None,
         top_players=top_players,
+        warnings=analysis_warnings,
     )
 
 

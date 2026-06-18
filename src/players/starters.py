@@ -11,7 +11,7 @@ from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
 from players.roster_normalize import harmonize_goalkeeper_bonuses
 
-# GK titolari: SofaScore lineups, else bonus FM (più basso = titolare).
+# Portiere titolare: solo SofaScore (posizione G/GK). Mai euristica/book.
 _ROLE_SLOTS: dict[str, int] = {"DEF": 4, "MID": 4, "FWD": 2}
 
 
@@ -19,74 +19,14 @@ def _matches_any(fm_name: str, api_names: set[str]) -> bool:
     return any(players_match(fm_name, name) for name in api_names)
 
 
-def _pick_one_gk(
-    gks: list[PlayerBonus],
-    *,
-    raw_bonuses: dict[tuple[str, str], tuple[int, int]] | None = None,
-) -> PlayerBonus | None:
-    """
-    Choose the likely starting GK from the full squad list.
-
-    FM: lower bonus_goal / bonus_clean_sheet ≈ titolare.
-    Backup GKs often appear in the anytime goalscorer market (book_goal_matched).
-    """
-    if not gks:
-        return None
-
-    def bonus_pair(p: PlayerBonus) -> tuple[int, int]:
-        if raw_bonuses:
-            return raw_bonuses.get((p.side, p.name), (p.bonus_goal, p.bonus_clean_sheet))
-        return p.bonus_goal, p.bonus_clean_sheet
-
-    pool = list(gks)
-    unquoted = [p for p in pool if not p.book_goal_matched]
-    if unquoted:
-        pool = unquoted
-    min_goal = min(bonus_pair(p)[0] for p in pool)
-    pool = [p for p in pool if bonus_pair(p)[0] == min_goal]
-    min_cs = min(bonus_pair(p)[1] for p in pool)
-    pool = [p for p in pool if bonus_pair(p)[1] == min_cs]
-    if len(pool) == 1:
-        return pool[0]
-    if len(pool) == 2:
-        # Ultimo fallback: evita ordine alfabetico che favoriva Keller < Kobel.
-        return max(pool, key=lambda p: p.name.lower())
-    return min(
-        pool,
-        key=lambda p: (
-            bonus_pair(p)[0],
-            bonus_pair(p)[1],
-            int(p.book_goal_matched),
-            int(p.book_card_matched),
-        ),
-    )
-
-
-def _pick_gk_for_side(
-    gks: list[PlayerBonus],
-    sofa_gk_names: set[str],
-    *,
-    raw_bonuses: dict[tuple[str, str], tuple[int, int]] | None = None,
-) -> PlayerBonus | None:
-    """Prefer SofaScore GK when exactly one roster keeper matches."""
-    if not gks:
-        return None
-    if sofa_gk_names:
-        matched = [p for p in gks if _matches_any(p.name, sofa_gk_names)]
-        if len(matched) == 1:
-            return matched[0]
-    return _pick_one_gk(gks, raw_bonuses=raw_bonuses)
-
-
 def mark_gk_goalscorer_quotes(
     roster: MatchRoster,
     *prob_sources: dict[str, float] | None,
 ) -> MatchRoster:
     """
-    Mark GK names found in anytime goalscorer markets (all book sources).
+    Mark GK names found in anytime goalscorer markets (for P(gol) / malus only).
 
-    Books quote backup keepers more often than the #1; used only as a tie-breaker
-    after FM bonus, not to assign P(gol) yet. Scans every GK on the roster.
+    Does NOT determine titolarità — starting GK comes from SofaScore only.
     """
     merged: dict[str, float] = {}
     for src in prob_sources:
@@ -108,46 +48,43 @@ def mark_gk_goalscorer_quotes(
     return roster
 
 
-def _consolidate_gk_starters(
+def _apply_sofa_gk_starters(
     players: list[PlayerBonus],
     *,
-    sofa_gk_home: set[str] | None = None,
-    sofa_gk_away: set[str] | None = None,
-    raw_gk_bonuses: dict[tuple[str, str], tuple[int, int]] | None = None,
+    sofa_gk_home: set[str],
+    sofa_gk_away: set[str],
 ) -> list[str]:
     """
-    Exactly one starting GK per side.
+    Mark exactly one GK per side from SofaScore lineups (position G/GK).
 
-    SofaScore GK (position G) wins when available; else FM bonus + book quotes
-    over the full keeper pool — never only among already-marked names.
+    If SofaScore has no GK for a side, no keeper is titolare — no clean-sheet EV.
     """
     notes: list[str] = []
-    sofa_by_side = {
-        "home": sofa_gk_home or set(),
-        "away": sofa_gk_away or set(),
-    }
-    for side in ("home", "away"):
+    for side, sofa_gk in (("home", sofa_gk_home), ("away", sofa_gk_away)):
         gks = [p for p in players if p.is_goalkeeper and p.side == side]
         if not gks:
             continue
-        wrong = [p.name for p in gks if p.starter]
-        pick = _pick_gk_for_side(
-            gks, sofa_by_side[side], raw_bonuses=raw_gk_bonuses
-        )
-        if not pick:
-            continue
         for i, player in enumerate(players):
             if player.is_goalkeeper and player.side == side:
-                players[i] = replace(
-                    player,
-                    starter=player.name == pick.name,
-                )
-        if sofa_by_side[side] and _matches_any(pick.name, sofa_by_side[side]):
+                players[i] = replace(player, starter=False)
+        if not sofa_gk:
+            notes.append(f"portiere {side}: SofaScore non disponibile (nessun EV GK)")
+            continue
+        matched = [p for p in gks if _matches_any(p.name, sofa_gk)]
+        if len(matched) == 1:
+            pick = matched[0]
+            for i, player in enumerate(players):
+                if player.is_goalkeeper and player.side == side:
+                    players[i] = replace(
+                        player,
+                        starter=player.name == pick.name,
+                    )
             notes.append(f"portiere {side}: {pick.name} (SofaScore)")
-        elif wrong and pick.name not in wrong:
-            notes.append(f"portiere {side}: {pick.name} (non {wrong[0]})")
-        elif not wrong:
-            notes.append(f"portiere {side}: {pick.name} (bonus FM)")
+        elif len(matched) > 1:
+            notes.append(f"portiere {side}: ambiguo SofaScore ({len(matched)} GK)")
+        else:
+            names = ", ".join(sorted(sofa_gk)[:3])
+            notes.append(f"portiere {side}: {names} non in rosa FM")
     return notes
 
 
@@ -179,6 +116,8 @@ def _mark_sofa_starters(
         if player.vice_allenatore:
             players[i] = replace(player, starter=True)
             continue
+        if player.is_goalkeeper:
+            continue
         side_names = home_names if player.side == "home" else away_names
         if side_names and _matches_any(player.name, side_names):
             players[i] = replace(player, starter=True)
@@ -192,11 +131,8 @@ def infer_starters(
     """
     Mark starter=True for expected XI.
 
-    Sources (in order):
-    1. SofaScore predicted/confirmed lineups for this fixture
-    2. Web search for probable lineups (when SofaScore missing/incomplete)
-    3. Heuristic XI by role + FM bonus — only if both above fail for that side
-    Vice allenatore is always treated as starter.
+    Portiere: solo SofaScore (probabili/ufficiali, posizione G).
+    Campo: SofaScore → ricerca web → euristica bonus FM.
     """
     updated, note, _, _, _ = infer_starters_impl(
         roster, sofascore_event_id=sofascore_event_id
@@ -209,10 +145,6 @@ def infer_starters_impl(
     *,
     sofascore_event_id: int | None = None,
 ) -> tuple[MatchRoster, str, set[str], set[str], dict[tuple[str, str], tuple[int, int]]]:
-    """
-    Like infer_starters but also returns SofaScore GK names and raw OCR bonuses
-    for a second GK pass after book quotes are merged.
-    """
     players = harmonize_goalkeeper_bonuses([replace(p, starter=False) for p in roster.players])
     raw_gk_bonuses = {
         (p.side, p.name): (p.bonus_goal, p.bonus_clean_sheet)
@@ -230,6 +162,8 @@ def infer_starters_impl(
     if sofascore_event_id:
         home_names, away_names, lineup_detail = fetch_event_starter_names(sofascore_event_id)
         sofa_gk_home, sofa_gk_away = fetch_event_gk_starter_names(sofascore_event_id)
+        home_names -= {p.name for p in players if p.is_goalkeeper and p.side == "home"}
+        away_names -= {p.name for p in players if p.is_goalkeeper and p.side == "away"}
 
     sofa_home_full = len(home_names) >= min_xi
     sofa_away_full = len(away_names) >= min_xi
@@ -285,11 +219,10 @@ def infer_starters_impl(
             notes.append(f"euristica bonus FM ({side})")
 
     notes.extend(
-        _consolidate_gk_starters(
+        _apply_sofa_gk_starters(
             players,
             sofa_gk_home=sofa_gk_home,
             sofa_gk_away=sofa_gk_away,
-            raw_gk_bonuses=raw_gk_bonuses,
         )
     )
 
@@ -315,18 +248,13 @@ def resolve_goalkeepers(
     sofa_gk_away: set[str] | None = None,
     raw_gk_bonuses: dict[tuple[str, str], tuple[int, int]] | None = None,
 ) -> tuple[MatchRoster, str]:
-    """
-    Re-pick one GK per side after book quotes are attached.
-
-    Backup keepers (Keller) often get book anytime-gol only once quotes merge;
-    this must run after attach_all_player_probs and before clean sheet EV.
-    """
+    """Re-apply SofaScore GK titolari (ignora raw_gk_bonuses — kept for API compat)."""
+    del raw_gk_bonuses
     players = list(roster.players)
-    notes = _consolidate_gk_starters(
+    notes = _apply_sofa_gk_starters(
         players,
-        sofa_gk_home=sofa_gk_home,
-        sofa_gk_away=sofa_gk_away,
-        raw_gk_bonuses=raw_gk_bonuses,
+        sofa_gk_home=sofa_gk_home or set(),
+        sofa_gk_away=sofa_gk_away or set(),
     )
     roster.players = players
     return roster, "; ".join(notes)

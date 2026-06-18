@@ -136,12 +136,16 @@ def _gk_starters_from_lineups(lineups: dict, side_key: str) -> set[str]:
 def fetch_event_gk_starter_names(event_id: int) -> tuple[set[str], set[str]]:
     """GK starter names from SofaScore lineups — works even when outfield XI is incomplete."""
     lineups = _fetch_lineups(event_id)
-    if not lineups:
-        return set(), set()
-    return (
-        _gk_starters_from_lineups(lineups, "home"),
-        _gk_starters_from_lineups(lineups, "away"),
-    )
+    if lineups:
+        home = _gk_starters_from_lineups(lineups, "home")
+        away = _gk_starters_from_lineups(lineups, "away")
+        if home or away:
+            return home, away
+
+    from odds.sofascore_gk_fallback import fetch_gk_starters_from_sofascore_web
+
+    home, away, _note = fetch_gk_starters_from_sofascore_web(event_id)
+    return home, away
 
 
 def _fetch_lineups_with_detail(event_id: int) -> tuple[dict | None, str]:
@@ -218,7 +222,7 @@ def _fetch_predicted_lineups(event_id: int) -> dict | None:
     return None
 
 
-def _fetch_lineups(event_id: int) -> dict | None:
+def _fetch_confirmed_lineups(event_id: int) -> dict | None:
     url = f"https://api.sofascore.com/api/v1/event/{event_id}/lineups"
     try:
         result = fetch_json(
@@ -233,7 +237,16 @@ def _fetch_lineups(event_id: int) -> dict | None:
             return data
     except RuntimeError:
         pass
-    return _fetch_predicted_lineups(event_id)
+    return None
+
+
+def _fetch_lineups(event_id: int) -> dict | None:
+    # Probabili formazioni (quelle visibili sul sito) prima delle ufficiali.
+    for fetcher in (_fetch_predicted_lineups, _fetch_confirmed_lineups):
+        lineups = fetcher(event_id)
+        if lineups:
+            return lineups
+    return None
 
 
 def _fetch_incidents(event_id: int) -> list[dict]:

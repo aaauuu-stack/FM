@@ -45,19 +45,26 @@ def test_resolve_starters_one_gk_per_team_with_sofa():
     assert next(p for p in away_gks if p.starter).name == "Vasilj"
 
 
-def test_gk_fallback_picks_kobel_without_sofa():
-    """Senza lineups SofaScore: portiere = bonus FM più basso (Kobel, non Keller)."""
+def test_no_gk_starter_without_sofa():
+    """Senza SofaScore: nessun portiere titolare (no EV clean sheet)."""
     roster = resolve_starters(_swiss_bosnia_roster())
     home_gks = [p for p in roster.home_players() if p.is_goalkeeper]
-    assert sum(1 for p in home_gks if p.starter) == 1
-    assert next(p for p in home_gks if p.starter).name == "Kobel"
+    assert sum(1 for p in home_gks if p.starter) == 0
     away_gks = [p for p in roster.away_players() if p.is_goalkeeper]
-    assert sum(1 for p in away_gks if p.starter) == 1
-    assert next(p for p in away_gks if p.starter).name == "Vasilj"
+    assert sum(1 for p in away_gks if p.starter) == 0
 
 
 def test_lineup_never_picks_three_gks():
-    roster = resolve_starters(_swiss_bosnia_roster())
+    from unittest.mock import patch
+
+    with patch(
+        "players.starters.fetch_event_starter_names",
+        return_value=({"Kobel", "Akanji", "Xhaka"}, {"Vasilj", "Dedic"}, "sofa"),
+    ), patch(
+        "players.starters.fetch_event_gk_starter_names",
+        return_value=({"Kobel"}, {"Vasilj"}),
+    ):
+        roster = resolve_starters(_swiss_bosnia_roster(), sofascore_event_id=1)
     for player in roster.players:
         if player.starter and player.is_goalkeeper:
             player.p_clean_sheet = 0.47
@@ -72,7 +79,16 @@ def test_lineup_never_picks_three_gks():
 
 
 def test_bench_gk_zero_ev():
-    roster = resolve_starters(_swiss_bosnia_roster())
+    from unittest.mock import patch
+
+    with patch(
+        "players.starters.fetch_event_starter_names",
+        return_value=({"Kobel"}, {"Vasilj"}, "sofa"),
+    ), patch(
+        "players.starters.fetch_event_gk_starter_names",
+        return_value=({"Kobel"}, {"Vasilj"}),
+    ):
+        roster = resolve_starters(_swiss_bosnia_roster(), sofascore_event_id=1)
     for player in roster.players:
         if player.starter:
             player.p_clean_sheet = 0.5
@@ -82,36 +98,45 @@ def test_bench_gk_zero_ev():
 
 
 def test_gk_fallback_skips_quoted_backup():
+    from unittest.mock import patch
+
     from players.starters import infer_starters
 
     roster = _swiss_bosnia_roster()
     for player in roster.players:
         if player.name == "Keller":
             player.book_goal_matched = True
-    roster, note = infer_starters(roster)
+    with patch(
+        "players.starters.fetch_event_starter_names",
+        return_value=({"Kobel", "Akanji"}, {"Vasilj", "Dedic"}, "sofa"),
+    ), patch(
+        "players.starters.fetch_event_gk_starter_names",
+        return_value=({"Kobel", "G. Kobel"}, {"Vasilj"}),
+    ):
+        roster, note = infer_starters(roster, sofascore_event_id=1)
     kobel = next(p for p in roster.players if p.name == "Kobel")
     keller = next(p for p in roster.players if p.name == "Keller")
     assert kobel.starter
     assert not keller.starter
-    assert "portiere home: Kobel" in note
+    assert "portiere home: Kobel (SofaScore)" in note
 
 
-def test_oddspapi_goal_market_marks_keller_picks_kobel():
-    """Keller quotato anytime gol (OddsPapi) → Kobel titolare, non Keller."""
+def test_oddspapi_goal_market_tags_keller_not_titolare():
+    """Quote anytime gol su Keller non lo rendono titolare — solo SofaScore."""
     from players.starters import infer_starters, mark_gk_goalscorer_quotes
 
     roster = _swiss_bosnia_roster()
     roster = mark_gk_goalscorer_quotes(roster, {"Keller": 0.02, "Embolo": 0.48})
-    roster, note = infer_starters(roster)
+    roster, _ = infer_starters(roster)
     kobel = next(p for p in roster.players if p.name == "Kobel")
     keller = next(p for p in roster.players if p.name == "Keller")
-    assert kobel.starter
+    assert not kobel.starter
     assert not keller.starter
     assert keller.book_goal_matched
 
 
-def test_resolve_goalkeepers_after_wrong_starter():
-    """Second pass GK dopo attach quote: Keller starter → corretto a Kobel."""
+def test_resolve_goalkeepers_uses_sofa_only():
+    """Second pass: solo SofaScore GK, ignora Keller starter errato."""
     from dataclasses import replace
 
     from players.starters import resolve_goalkeepers
@@ -126,21 +151,33 @@ def test_resolve_goalkeepers_after_wrong_starter():
             row = replace(p, starter=False)
         players.append(row)
     roster.players = players
-    raw = {(p.side, p.name): (p.bonus_goal, p.bonus_clean_sheet) for p in roster.players if p.is_goalkeeper}
-    roster, note = resolve_goalkeepers(roster, raw_gk_bonuses=raw)
+    roster, note = resolve_goalkeepers(
+        roster,
+        sofa_gk_home={"Kobel", "G. Kobel"},
+        sofa_gk_away={"Vasilj"},
+    )
     kobel = next(p for p in roster.players if p.name == "Kobel")
     keller = next(p for p in roster.players if p.name == "Keller")
     assert kobel.starter
     assert not keller.starter
-    assert "non Keller" in note
+    assert "portiere home: Kobel (SofaScore)" in note
 
 
 def test_mark_gk_goalscorer_quotes_before_infer():
+    from unittest.mock import patch
+
     from players.starters import infer_starters, mark_gk_goalscorer_quotes
 
     roster = _swiss_bosnia_roster()
     roster = mark_gk_goalscorer_quotes(roster, {"Y. Keller": 0.02, "Embolo": 0.48})
-    roster, _ = infer_starters(roster)
+    with patch(
+        "players.starters.fetch_event_starter_names",
+        return_value=({"Kobel", "Akanji"}, {"Vasilj", "Dedic"}, "sofa"),
+    ), patch(
+        "players.starters.fetch_event_gk_starter_names",
+        return_value=({"Kobel"}, {"Vasilj"}),
+    ):
+        roster, _ = infer_starters(roster, sofascore_event_id=1)
     kobel = next(p for p in roster.players if p.name == "Kobel")
     keller = next(p for p in roster.players if p.name == "Keller")
     assert kobel.starter
@@ -177,7 +214,7 @@ def test_sofa_gk_position_overrides_wrongly_marked_backup():
 
 
 def test_web_search_never_marks_backup_gk():
-    """Ricerca web che cita solo Keller → titolare resta Kobel."""
+    """Ricerca web non sceglie il portiere — solo SofaScore."""
     from unittest.mock import patch
 
     from players.starters import infer_starters
@@ -196,10 +233,11 @@ def test_web_search_never_marks_backup_gk():
     kobel = next(p for p in updated.players if p.name == "Kobel")
     hadzikic = next(p for p in updated.players if p.name == "Hadzikic")
     vasilj = next(p for p in updated.players if p.name == "Vasilj")
-    assert kobel.starter
+    assert not kobel.starter
     assert not keller.starter
-    assert vasilj.starter
+    assert not vasilj.starter
     assert not hadzikic.starter
+    assert "SofaScore non disponibile" in note
 
 
 def test_sofa_complete_lineup_excludes_backup_gk():

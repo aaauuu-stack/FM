@@ -109,12 +109,17 @@ def test_infer_starters_uses_web_search_when_sofa_missing():
     )
     with patch("players.lineup_web_search.web_search_enabled", return_value=True):
         with patch("players.lineup_web_search._collect_corpus", return_value=corpus):
-            updated, note = infer_starters(roster)
+            with patch(
+                "players.starters.fetch_event_gk_starter_names",
+                return_value=({"Kobel", "G. Kobel"}, {"Vasilj"}),
+            ):
+                updated, note = infer_starters(roster, sofascore_event_id=1)
 
     starters = {p.name for p in updated.players if p.starter}
-    assert "Kobel" in starters  # GK da bonus FM, non dalla ricerca web
+    assert "Kobel" in starters
     assert "Embolo" in starters
     assert "Amdouni" not in starters
     assert "Vasilj" in starters
     assert "Tabakovic" not in starters
     assert "ricerca online" in note
+    assert "portiere home: Kobel (SofaScore)" in note
