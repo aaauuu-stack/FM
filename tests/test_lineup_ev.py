@@ -11,14 +11,17 @@ from scoring.lineup_points import compute_player_ev
 
 
 def _sample_roster() -> MatchRoster:
+    def _p(name, side, role, **kw) -> PlayerBonus:
+        return PlayerBonus(name, side, role, starter=not kw.pop("vice", False), **kw)
+
     return MatchRoster(
         match_id="TEST",
         home="England",
         away="Croatia",
         players=[
-            PlayerBonus("Kane", "home", "FWD", bonus_goal=3, p_goal=0.35),
-            PlayerBonus("Toney", "home", "FWD", bonus_goal=9, p_goal=0.12),
-            PlayerBonus(
+            _p("Kane", "home", "FWD", bonus_goal=3, p_goal=0.35),
+            _p("Toney", "home", "FWD", bonus_goal=9, p_goal=0.12),
+            _p(
                 "Pickford",
                 "home",
                 "GK",
@@ -27,15 +30,16 @@ def _sample_roster() -> MatchRoster:
                 p_goal=0.01,
                 p_clean_sheet=0.40,
             ),
-            PlayerBonus(
+            _p(
                 "Sucic",
                 "away",
                 "MID",
                 bonus_goal=12,
                 p_goal=0.06,
+                vice=True,
                 vice_allenatore=True,
             ),
-            PlayerBonus(
+            _p(
                 "Livakovic",
                 "away",
                 "GK",
@@ -44,7 +48,7 @@ def _sample_roster() -> MatchRoster:
                 p_goal=0.01,
                 p_clean_sheet=0.25,
             ),
-            PlayerBonus("Kramaric", "away", "FWD", bonus_goal=5, p_goal=0.18),
+            _p("Kramaric", "away", "FWD", bonus_goal=5, p_goal=0.18),
         ],
     )
 

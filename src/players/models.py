@@ -14,8 +14,10 @@ class PlayerBonus:
     role: str  # GK, DEF, MID, FWD
     bonus_goal: int = 0
     bonus_clean_sheet: int = 0  # GK: porta inviolata (bonus variabile)
-    starter: bool = True  # titolare (richiesto per pronostico K)
+    starter: bool = False  # inferito da SofaScore / euristica (FM non indica titolari)
     vice_allenatore: bool = False  # 5° giocatore pre-selezionato dallo screen
+    book_goal_matched: bool = False  # trovato su mercato anytime gol
+    book_card_matched: bool = False  # trovato su mercato cartellini
     p_goal: float | None = None
     p_gk_goal: float | None = None
     p_penalty_scored: float | None = None
@@ -67,5 +69,7 @@ class MatchRoster:
         return marked[0]
 
     def lineup_pool(self) -> list[PlayerBonus]:
-        """Giocatori disponibili per i 4 slot personali (escluso il vice)."""
-        return [p for p in self.players if not p.vice_allenatore]
+        """Giocatori disponibili per i 4 slot (escluso vice, solo titolari)."""
+        return [
+            p for p in self.players if not p.vice_allenatore and p.starter
+        ]

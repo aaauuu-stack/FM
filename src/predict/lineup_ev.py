@@ -41,7 +41,13 @@ def _valid_lineup(players: list[PlayerBonus]) -> bool:
     if len(players) != LINEUP_SIZE:
         return False
     sides = {p.side for p in players}
-    return "home" in sides and "away" in sides
+    if "home" not in sides or "away" not in sides:
+        return False
+    for side in ("home", "away"):
+        gks = sum(1 for p in players if p.is_goalkeeper and p.side == side)
+        if gks > 1:
+            return False
+    return True
 
 
 def _build_recommendation(

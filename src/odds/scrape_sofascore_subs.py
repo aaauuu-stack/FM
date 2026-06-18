@@ -97,6 +97,17 @@ def _fetch_team_recent_events(team_id: int, pages: int = 1) -> list[dict]:
     return events
 
 
+def fetch_event_starter_names(event_id: int) -> tuple[set[str], set[str]]:
+    """Starter names from SofaScore lineups (predicted or confirmed)."""
+    lineups = _fetch_lineups(event_id)
+    if not lineups:
+        return set(), set()
+    return (
+        _starters_from_lineups(lineups, "home"),
+        _starters_from_lineups(lineups, "away"),
+    )
+
+
 def _fetch_lineups(event_id: int) -> dict | None:
     url = f"https://api.sofascore.com/api/v1/event/{event_id}/lineups"
     try:

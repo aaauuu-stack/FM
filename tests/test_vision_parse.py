@@ -40,4 +40,4 @@ def test_roster_from_input_pasted_text():
     """
     roster = roster_from_input(pasted_text=text)
     assert roster.home == "Uzbekistan"
-    assert len(roster.lineup_pool()) >= 4
+    assert len([p for p in roster.players if not p.vice_allenatore]) >= 4

@@ -5,6 +5,8 @@ from __future__ import annotations
 import statistics
 from typing import Any
 
+from dataclasses import replace
+
 from odds.devig import proportional_devig
 from odds.scrape_sofascore import _choice_decimal, _market_name
 from players.models import MatchRoster, PlayerBonus
@@ -140,12 +142,15 @@ def attach_sofascore_player_probs(
     updated: list[PlayerBonus] = []
     for player in roster.players:
         kwargs: dict[str, float] = {}
+        goal_hit = player.book_goal_matched
+        card_hit = player.book_card_matched
 
         if float(player.p_goal or 0) <= 0:
             for api_name, prob in goal_odds.items():
                 if players_match(player.name, api_name):
                     kwargs["p_goal"] = prob
                     g_hit += 1
+                    goal_hit = True
                     break
 
         if player.p_yellow is None or float(player.p_yellow or 0) <= 0:
@@ -153,9 +158,18 @@ def attach_sofascore_player_probs(
                 if players_match(player.name, api_name):
                     kwargs["p_yellow"] = prob
                     c_hit += 1
+                    card_hit = True
                     break
 
-        updated.append(player.with_probs(**kwargs) if kwargs else player)
+        if kwargs:
+            row = replace(
+                player.with_probs(**kwargs),
+                book_goal_matched=goal_hit,
+                book_card_matched=card_hit,
+            )
+        else:
+            row = player
+        updated.append(row)
 
     roster.players = updated
     if g_hit or c_hit:

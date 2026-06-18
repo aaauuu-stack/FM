@@ -70,7 +70,7 @@ def load_roster(path: str | Path) -> MatchRoster:
                 bonus_clean_sheet=_require_int(
                     item.get("bonus_clean_sheet", 0), "bonus_clean_sheet"
                 ),
-                starter=_parse_bool(item.get("starter"), default=True),
+                starter=_parse_bool(item.get("starter"), default=False),
                 vice_allenatore=is_vice,
             )
         )

@@ -6,6 +6,8 @@ import math
 import statistics
 from typing import Any
 
+from dataclasses import replace
+
 from odds.api_client import fetch_odds
 from odds.api_normalize import find_event
 from odds.devig import proportional_devig
@@ -48,12 +50,17 @@ def apply_goalscorer_probs(
     matched = 0
     for player in roster.players:
         p_goal = 0.0
+        hit = False
         for api_name, prob in probs.items():
             if players_match(player.name, api_name):
                 p_goal = prob
                 matched += 1
+                hit = True
                 break
-        updated.append(player.with_probs(p_goal=p_goal))
+        row = player.with_probs(p_goal=p_goal)
+        if hit:
+            row = replace(row, book_goal_matched=True)
+        updated.append(row)
 
     roster.players = updated
     return roster, f"goalscorer API ({matched}/{len(roster.players)} matched)"
@@ -132,7 +139,9 @@ def _player_goal_weight(player: PlayerBonus, roster: MatchRoster) -> float:
     base = _ROLE_GOAL_WEIGHT.get(player.role.upper(), 1.0)
     if base <= 0:
         return 0.0
-    return base * (1.0 + player.bonus_goal / 20.0)
+    # Bonus FM basso = titolare / attaccante più probabile (come path stats NT)
+    fm_factor = 1.0 + (12.0 - min(player.bonus_goal, 12)) / 12.0
+    return base * fm_factor
 
 
 def attach_poisson_goal_estimates(roster: MatchRoster, match) -> MatchRoster:
@@ -146,6 +155,9 @@ def attach_poisson_goal_estimates(roster: MatchRoster, match) -> MatchRoster:
 
     updated: list[PlayerBonus] = []
     for player in roster.players:
+        if player.is_goalkeeper or float(player.p_goal or 0.0) > 0:
+            updated.append(player)
+            continue
         w = _player_goal_weight(player, roster)
         side_total = weights[player.side]
         if w <= 0 or side_total <= 0:
@@ -160,9 +172,10 @@ def attach_poisson_goal_estimates(roster: MatchRoster, match) -> MatchRoster:
     return roster
 
 
-def _needs_goal_fill(roster: MatchRoster) -> bool:
-    return not any(
-        float(p.p_goal or 0.0) > 0 for p in roster.players if not p.is_goalkeeper
+def _roster_needs_goal_fill(roster: MatchRoster) -> bool:
+    """True if any outfield player still lacks P(gol)."""
+    return any(
+        not p.is_goalkeeper and float(p.p_goal or 0.0) <= 0 for p in roster.players
     )
 
 
@@ -176,20 +189,19 @@ def attach_goal_probs(
     goalscorer_probs: dict[str, float] | None = None,
     event_player_props: dict[str, dict[str, float]] | None = None,
 ) -> tuple[MatchRoster, str]:
-    """Fill missing P(gol): The Odds API, then Poisson solo se ancora vuoto."""
+    """Fill missing P(gol) per giocatore: API, poi Poisson solo sui vuoti."""
     notes: list[str] = []
-    if not _needs_goal_fill(roster):
-        return roster, "P(gol) gia da quote/scrape"
 
-    if goalscorer_probs is not None:
-        roster, bulk_note = apply_goalscorer_probs(roster, goalscorer_probs)
-    else:
-        roster, bulk_note = attach_goalscorer_odds(
-            roster, sport=sport, region=region, force_refresh=force_refresh
-        )
-    notes.append(bulk_note)
+    if _roster_needs_goal_fill(roster):
+        if goalscorer_probs is not None:
+            roster, bulk_note = apply_goalscorer_probs(roster, goalscorer_probs)
+        else:
+            roster, bulk_note = attach_goalscorer_odds(
+                roster, sport=sport, region=region, force_refresh=force_refresh
+            )
+        notes.append(bulk_note)
 
-    if _needs_goal_fill(roster):
+    if _roster_needs_goal_fill(roster):
         if event_player_props is not None:
             roster, props_note = apply_event_player_props(roster, event_player_props)
         else:
@@ -199,10 +211,12 @@ def attach_goal_probs(
         if props_note:
             notes.append(props_note)
 
-    if _needs_goal_fill(roster):
+    if _roster_needs_goal_fill(roster):
         roster = attach_poisson_goal_estimates(roster, match)
-        notes.append("Poisson ultimo fallback")
+        notes.append("Poisson ultimo fallback (solo giocatori senza quota gol)")
 
+    if not notes:
+        return roster, "P(gol) gia da quote/scrape per tutti"
     return roster, "; ".join(notes)
 
 
@@ -220,6 +234,9 @@ def attach_clean_sheet_probs(roster: MatchRoster, match) -> MatchRoster:
     p_home_cs, p_away_cs = estimate_clean_sheet_probs_from_match(match)
     updated: list[PlayerBonus] = []
     for player in roster.players:
+        if not (player.is_goalkeeper and player.starter):
+            updated.append(player)
+            continue
         p_cs = p_home_cs if player.side == "home" else p_away_cs
         updated.append(player.with_probs(p_clean_sheet=p_cs))
     roster.players = updated
@@ -269,6 +286,5 @@ def attach_all_player_probs(
     )
     notes.append(goal_note)
 
-    roster = attach_clean_sheet_probs(roster, match)
     roster = attach_event_probs(roster, match)
     return roster, " | ".join(notes)

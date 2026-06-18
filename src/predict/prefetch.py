@@ -45,6 +45,7 @@ class MatchPrefetch:
     goalscorer_probs: dict[str, float] | None = None
     event_player_props: dict[str, dict[str, float]] | None = None
     first_card: tuple[dict[str, float], str] | None = None
+    sofascore_event_id: int | None = None
 
 
 def _fetch_sofa_lite(
@@ -174,6 +175,8 @@ def build_match_parallel(
             ):
                 sources.append("SofaScore")
 
+        if oddspapi_bundle:
+            prefetch.sofascore_event_id = oddspapi_bundle.sofascore_event_id
         if oddspapi_bundle and oddspapi_bundle.goal_probs is not None:
             prefetch.oddspapi_props = (
                 oddspapi_bundle.goal_probs,

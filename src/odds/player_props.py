@@ -5,6 +5,8 @@ from __future__ import annotations
 import statistics
 from typing import Any
 
+from dataclasses import replace
+
 from odds.api_client import fetch_event_odds, fetch_odds
 from odds.api_normalize import find_event
 from odds.devig import proportional_devig
@@ -129,22 +131,37 @@ def apply_event_player_props(
     updated: list[PlayerBonus] = []
     for player in roster.players:
         kwargs: dict[str, float] = {}
-        for api_name, prob in props.get("goal", {}).items():
-            if players_match(player.name, api_name):
-                kwargs["p_goal"] = prob
-                g_matched += 1
-                break
-        for api_name, prob in props.get("card", {}).items():
-            if players_match(player.name, api_name):
-                kwargs["p_yellow"] = prob
-                c_matched += 1
-                break
-        for api_name, prob in props.get("red", {}).items():
-            if players_match(player.name, api_name):
-                kwargs["p_red"] = prob
-                r_matched += 1
-                break
-        updated.append(player.with_probs(**kwargs) if kwargs else player)
+        goal_hit = player.book_goal_matched
+        card_hit = player.book_card_matched
+        if float(player.p_goal or 0) <= 0:
+            for api_name, prob in props.get("goal", {}).items():
+                if players_match(player.name, api_name):
+                    kwargs["p_goal"] = prob
+                    g_matched += 1
+                    goal_hit = True
+                    break
+        if player.p_yellow is None or float(player.p_yellow or 0) <= 0:
+            for api_name, prob in props.get("card", {}).items():
+                if players_match(player.name, api_name):
+                    kwargs["p_yellow"] = prob
+                    c_matched += 1
+                    card_hit = True
+                    break
+        if player.p_red is None or float(player.p_red or 0) <= 0:
+            for api_name, prob in props.get("red", {}).items():
+                if players_match(player.name, api_name):
+                    kwargs["p_red"] = prob
+                    r_matched += 1
+                    break
+        if kwargs:
+            row = replace(
+                player.with_probs(**kwargs),
+                book_goal_matched=goal_hit,
+                book_card_matched=card_hit,
+            )
+        else:
+            row = player
+        updated.append(row)
 
     roster.players = updated
     parts = []

@@ -39,6 +39,7 @@ Rules:
 - Section headers: Portieri=GK, Difensori=DEF, Centrocampisti=MID, Attaccanti=FWD.
 - bonus_goal is the +N goal bonus; GK rows may also show clean-sheet bonus.
 - Include every visible player across all screenshots; merge duplicates once.
+- FM lists the full selectable squad (starters and bench) — do NOT guess who starts.
 - Use Italian display names when shown (e.g. Uzbekistan, Colombia, Inghilterra).
 """
 
