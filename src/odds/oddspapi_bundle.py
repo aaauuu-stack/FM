@@ -28,6 +28,9 @@ class OddsPapiBundle:
 
 
 from odds.sofascore_bundle import sofascore_id_from_fixture
+
+
+def fetch_oddspapi_bundle(
     home_query: str,
     away_query: str,
     kickoff_iso: str | None = None,
