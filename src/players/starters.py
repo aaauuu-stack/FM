@@ -6,11 +6,12 @@ from dataclasses import replace
 
 from odds.scrape_sofascore_subs import fetch_event_starter_names
 from odds.sofascore_event_lookup import min_sofa_xi_per_side
+from players.lineup_web_search import fetch_lineups_web_search
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
+from players.roster_normalize import harmonize_goalkeeper_bonuses
 
-# Typical NT shape when we must guess outfield (no lineups / sparse quotes).
-# GK titolari: solo da SofaScore — mai euristica (evita Keller vs Kobel).
+# GK titolari: SofaScore lineups, else bonus FM (più basso = titolare).
 _ROLE_SLOTS: dict[str, int] = {"DEF": 4, "MID": 4, "FWD": 2}
 
 
@@ -19,11 +20,16 @@ def _matches_any(fm_name: str, api_names: set[str]) -> bool:
 
 
 def _pick_one_gk(gks: list[PlayerBonus]) -> PlayerBonus | None:
+    """
+    Choose the likely starting GK.
+
+    FM: lower bonus_goal / bonus_clean_sheet ≈ titolare.
+    Backup GKs often appear in the anytime goalscorer market (book_goal_matched).
+    """
     if not gks:
         return None
     starters = [p for p in gks if p.starter]
     pool = starters if starters else gks
-    # FM: bonus più basso ≈ titolare; backup spesso ha quota anytime gol → ultimo criterio
     return min(
         pool,
         key=lambda p: (
@@ -33,6 +39,32 @@ def _pick_one_gk(gks: list[PlayerBonus]) -> PlayerBonus | None:
             p.name.lower(),
         ),
     )
+
+
+def mark_gk_goalscorer_quotes(
+    roster: MatchRoster,
+    probs: dict[str, float] | None,
+) -> MatchRoster:
+    """
+    Mark GK names found in the anytime goalscorer market before titolarità pick.
+
+    Books quote backup keepers more often than the #1; used only as a tie-breaker
+    after FM bonus, not to assign P(gol) yet.
+    """
+    if not probs:
+        return roster
+    updated: list[PlayerBonus] = []
+    for player in roster.players:
+        if not player.is_goalkeeper:
+            updated.append(player)
+            continue
+        quoted = any(players_match(player.name, api_name) for api_name in probs)
+        if quoted:
+            updated.append(replace(player, book_goal_matched=True))
+        else:
+            updated.append(player)
+    roster.players = updated
+    return roster
 
 
 def _consolidate_gk_starters(players: list[PlayerBonus]) -> None:
@@ -71,15 +103,34 @@ def _heuristic_xi(side_players: list[PlayerBonus]) -> set[str]:
         if need == 0:
             continue
         pool = [p for p in in_role if p.name not in chosen]
-        if role == "GK":
-            pick = _pick_one_gk(pool)
-            if pick:
-                chosen.add(pick.name)
-            continue
         pool.sort(key=lambda p: p.bonus_goal)
         for player in pool[:need]:
             chosen.add(player.name)
     return chosen
+
+
+def _ensure_gk_starters_fallback(players: list[PlayerBonus]) -> list[str]:
+    """
+    If SofaScore lineups omit the GK, pick one per side by FM bonus.
+
+    Lower bonus_goal ≈ titolare; de-prioritize backup with book anytime-gol quote.
+    """
+    notes: list[str] = []
+    for side in ("home", "away"):
+        gks = [p for p in players if p.is_goalkeeper and p.side == side]
+        if not gks or any(p.starter for p in gks):
+            continue
+        pick = _pick_one_gk(gks)
+        if not pick:
+            continue
+        for i, player in enumerate(players):
+            if player.is_goalkeeper and player.side == side:
+                players[i] = replace(
+                    player,
+                    starter=player.name == pick.name,
+                )
+        notes.append(f"portiere {side}: {pick.name} (bonus FM più basso)")
+    return notes
 
 
 def _mark_sofa_starters(
@@ -106,10 +157,11 @@ def infer_starters(
 
     Sources (in order):
     1. SofaScore predicted/confirmed lineups for this fixture
-    2. Heuristic XI by role + FM bonus — only if SofaScore missing/incomplete for that side
+    2. Web search for probable lineups (when SofaScore missing/incomplete)
+    3. Heuristic XI by role + FM bonus — only if both above fail for that side
     Vice allenatore is always treated as starter.
     """
-    players = [replace(p, starter=False) for p in roster.players]
+    players = harmonize_goalkeeper_bonuses([replace(p, starter=False) for p in roster.players])
     notes: list[str] = []
     min_xi = min_sofa_xi_per_side()
 
@@ -119,39 +171,61 @@ def infer_starters(
     if sofascore_event_id:
         home_names, away_names, lineup_detail = fetch_event_starter_names(sofascore_event_id)
 
+    sofa_home_full = len(home_names) >= min_xi
+    sofa_away_full = len(away_names) >= min_xi
+
+    web_home: set[str] = set()
+    web_away: set[str] = set()
+    web_note = ""
+    if not sofa_home_full or not sofa_away_full:
+        web_home, web_away, web_note = fetch_lineups_web_search(
+            MatchRoster(
+                match_id=roster.match_id,
+                home=roster.home,
+                away=roster.away,
+                kickoff=roster.kickoff,
+                players=players,
+            )
+        )
+        if web_home and not sofa_home_full:
+            home_names = web_home
+        elif web_home:
+            home_names |= web_home
+        if web_away and not sofa_away_full:
+            away_names = web_away
+        elif web_away:
+            away_names |= web_away
+
     _mark_sofa_starters(players, home_names, away_names)
 
-    home_sofa_ok = len(home_names) >= min_xi
-    away_sofa_ok = len(away_names) >= min_xi
-
-    if home_sofa_ok and away_sofa_ok:
+    if sofa_home_full and sofa_away_full:
         notes.append(f"SofaScore formazioni ({len(home_names)}/{len(away_names)} titolari)")
+    elif web_note and (web_home or web_away):
+        notes.append(web_note)
     elif home_names or away_names:
-        notes.append("SofaScore parziale + euristica")
-        for side, sofa_ok, side_names in (
-            ("home", home_sofa_ok, home_names),
-            ("away", away_sofa_ok, away_names),
-        ):
-            if sofa_ok:
-                continue
-            side_players = [p for p in players if p.side == side]
-            xi_names = _heuristic_xi(side_players)
-            for i, player in enumerate(players):
-                if player.side == side and player.name in xi_names:
-                    players[i] = replace(player, starter=True)
+        notes.append("SofaScore parziale")
+    elif sofascore_event_id and lineup_detail:
+        notes.append(lineup_detail)
     else:
-        if sofascore_event_id and lineup_detail:
-            notes.append(lineup_detail + " → euristica")
-        else:
-            notes.append("euristica ruolo+bonus FM (SofaScore non disponibile)")
-        for side in ("home", "away"):
-            side_players = [p for p in players if p.side == side]
-            xi_names = _heuristic_xi(side_players)
-            for i, player in enumerate(players):
-                if player.side == side and player.name in xi_names:
-                    players[i] = replace(player, starter=True)
+        notes.append("SofaScore non disponibile")
+
+    for side in ("home", "away"):
+        side_names = home_names if side == "home" else away_names
+        if len(side_names) >= min_xi:
+            continue
+        marked = sum(1 for p in players if p.side == side and p.starter)
+        if marked >= min_xi:
+            continue
+        side_players = [p for p in players if p.side == side]
+        xi_names = _heuristic_xi(side_players)
+        for i, player in enumerate(players):
+            if player.side == side and player.name in xi_names:
+                players[i] = replace(player, starter=True)
+        if marked < min_xi:
+            notes.append(f"euristica bonus FM ({side})")
 
     _consolidate_gk_starters(players)
+    notes.extend(_ensure_gk_starters_fallback(players))
 
     return (
         MatchRoster(

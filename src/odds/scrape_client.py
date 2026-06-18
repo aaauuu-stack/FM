@@ -54,21 +54,77 @@ def _write_cache(cache_file: Path, data: Any) -> None:
     )
 
 
-def _fetch_live(url: str, headers: dict[str, str]) -> bytes:
-    """GET with curl_cffi when installed, else urllib."""
+def _fetch_live(
+    url: str,
+    headers: dict[str, str],
+    *,
+    method: str = "GET",
+    data: bytes | None = None,
+) -> bytes:
+    """GET/POST with curl_cffi when installed, else urllib."""
     timeout = http_timeout(25.0)
     try:
         from curl_cffi import requests as cffi_requests
 
-        response = cffi_requests.get(
-            url, headers=headers, impersonate="chrome120", timeout=timeout
-        )
+        if method == "POST":
+            response = cffi_requests.post(
+                url,
+                headers=headers,
+                data=data,
+                impersonate="chrome120",
+                timeout=timeout,
+            )
+        else:
+            response = cffi_requests.get(
+                url, headers=headers, impersonate="chrome120", timeout=timeout
+            )
         response.raise_for_status()
         return response.content
     except ImportError:
-        request = urllib.request.Request(url, headers=headers)
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
+
+
+def fetch_text(
+    url: str,
+    *,
+    cache_name: str,
+    ttl: int = DEFAULT_CACHE_TTL,
+    extra_headers: dict[str, str] | None = None,
+    method: str = "GET",
+    body: bytes | None = None,
+) -> ScrapeFetchResult:
+    """Fetch HTML/text with disk cache."""
+    cache_file = _cache_dir() / cache_name
+    mem_key = f"text:{cache_file.resolve()}"
+    cached = mem_get(mem_key, ttl)
+    if cached is None:
+        cached = _read_cache(cache_file, ttl)
+        if cached is not None:
+            mem_set(mem_key, cached)
+    if cached is not None:
+        return ScrapeFetchResult(data=cached, from_cache=True)
+
+    headers = {
+        **BROWSER_HEADERS,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        **(extra_headers or {}),
+    }
+    try:
+        raw = _fetch_live(url, headers, method=method, data=body)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Scrape HTTP {exc.code} on {url}: {detail[:240]}") from exc
+    except Exception as exc:
+        if exc.__class__.__name__ == "HTTPError":
+            raise RuntimeError(f"Scrape HTTP error on {url}: {exc}") from exc
+        raise RuntimeError(f"Scrape request failed on {url}: {exc}") from exc
+
+    text = raw.decode("utf-8", errors="replace")
+    _write_cache(cache_file, text)
+    mem_set(mem_key, text)
+    return ScrapeFetchResult(data=text, from_cache=False)
 
 
 def fetch_json(

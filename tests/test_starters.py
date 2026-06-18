@@ -8,10 +8,10 @@ from scoring.lineup_points import compute_player_ev
 
 def _swiss_bosnia_roster() -> MatchRoster:
     players = [
-        PlayerBonus(name="Keller", side="home", role="GK", bonus_goal=5, bonus_clean_sheet=5),
+        PlayerBonus(name="Keller", side="home", role="GK", bonus_goal=5, bonus_clean_sheet=6),
         PlayerBonus(name="Kobel", side="home", role="GK", bonus_goal=5, bonus_clean_sheet=5),
-        PlayerBonus(name="Mvogo", side="home", role="GK", bonus_goal=5, bonus_clean_sheet=5),
-        PlayerBonus(name="Hadzikic", side="away", role="GK", bonus_goal=6, bonus_clean_sheet=6),
+        PlayerBonus(name="Mvogo", side="home", role="GK", bonus_goal=6, bonus_clean_sheet=6),
+        PlayerBonus(name="Hadzikic", side="away", role="GK", bonus_goal=7, bonus_clean_sheet=7),
         PlayerBonus(name="Vasilj", side="away", role="GK", bonus_goal=6, bonus_clean_sheet=6),
         PlayerBonus(name="Akanji", side="home", role="DEF", bonus_goal=8),
         PlayerBonus(name="Tabakovic", side="away", role="FWD", bonus_goal=12),
@@ -42,11 +42,15 @@ def test_resolve_starters_one_gk_per_team_with_sofa():
     assert next(p for p in away_gks if p.starter).name == "Vasilj"
 
 
-def test_no_heuristic_gk_without_sofa():
-    """Senza SofaScore non indoviniamo il portiere (evita Keller)."""
+def test_gk_fallback_picks_kobel_without_sofa():
+    """Senza lineups SofaScore: portiere = bonus FM più basso (Kobel, non Keller)."""
     roster = resolve_starters(_swiss_bosnia_roster())
     home_gks = [p for p in roster.home_players() if p.is_goalkeeper]
-    assert sum(1 for p in home_gks if p.starter) == 0
+    assert sum(1 for p in home_gks if p.starter) == 1
+    assert next(p for p in home_gks if p.starter).name == "Kobel"
+    away_gks = [p for p in roster.away_players() if p.is_goalkeeper]
+    assert sum(1 for p in away_gks if p.starter) == 1
+    assert next(p for p in away_gks if p.starter).name == "Vasilj"
 
 
 def test_lineup_never_picks_three_gks():
@@ -74,25 +78,32 @@ def test_bench_gk_zero_ev():
     assert compute_player_ev(bench).ev_total == 0.0
 
 
-def test_bench_gk_zero_ev_even_with_book_goal_quote():
-    """Backup GK con quota gol book: non titolare, probabilità azzerate."""
-    from players.starters import apply_starter_probabilities, infer_starters
+def test_gk_fallback_skips_quoted_backup():
+    from players.starters import infer_starters
 
     roster = _swiss_bosnia_roster()
     for player in roster.players:
         if player.name == "Keller":
             player.book_goal_matched = True
-            player.p_goal = 0.02
-    roster, _ = infer_starters(roster)
-    for player in roster.players:
-        if player.starter and player.is_goalkeeper:
-            player.p_clean_sheet = 0.5
-    roster = apply_starter_probabilities(roster)
+    roster, note = infer_starters(roster)
+    kobel = next(p for p in roster.players if p.name == "Kobel")
     keller = next(p for p in roster.players if p.name == "Keller")
+    assert kobel.starter
     assert not keller.starter
-    assert float(keller.p_goal or 0) == 0.0
-    assert float(keller.p_clean_sheet or 0) == 0.0
-    assert "Keller" not in {p.name for p in roster.lineup_pool()}
+    assert "portiere home: Kobel" in note
+
+
+def test_mark_gk_goalscorer_quotes_before_infer():
+    from players.starters import infer_starters, mark_gk_goalscorer_quotes
+
+    roster = _swiss_bosnia_roster()
+    roster = mark_gk_goalscorer_quotes(roster, {"Y. Keller": 0.02, "Embolo": 0.48})
+    roster, _ = infer_starters(roster)
+    kobel = next(p for p in roster.players if p.name == "Kobel")
+    keller = next(p for p in roster.players if p.name == "Keller")
+    assert kobel.starter
+    assert not keller.starter
+    assert keller.book_goal_matched
 
 
 def test_sofa_complete_lineup_excludes_backup_gk():

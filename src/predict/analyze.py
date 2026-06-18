@@ -8,7 +8,7 @@ from odds.goalscorer import attach_all_player_probs, attach_clean_sheet_probs
 from odds.scrape_sofascore_subs import TeamSubProfile
 from players.models import MatchRoster
 from players.roster_loader import load_roster
-from players.starters import apply_starter_probabilities, infer_starters
+from players.starters import apply_starter_probabilities, infer_starters, mark_gk_goalscorer_quotes
 from predict.event_ev import recommend_first_card, recommend_first_sub
 from predict.prefetch import build_match_parallel
 from predict.ev_report import (
@@ -74,6 +74,7 @@ def _analyze_with_roster(
             top_n=top_n,
         )
 
+    roster = mark_gk_goalscorer_quotes(roster, prefetch.goalscorer_probs)
     roster, starter_note = infer_starters(
         roster,
         sofascore_event_id=prefetch.sofascore_event_id,
