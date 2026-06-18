@@ -21,7 +21,7 @@ _OCR_MAX_CONCURRENT = 3
 _ocr_semaphore = threading.Semaphore(_OCR_MAX_CONCURRENT)
 _BANNER_MIN_BRIGHTNESS = 160
 _BANNER_MIN_SCORE = 900.0
-_TESSERACT_CONFIG = "--psm 6 --oem 0"
+_TESSERACT_CONFIG = "--psm 6 --oem 1"
 
 
 def _default_match_id(home: str, away: str) -> str:
@@ -157,7 +157,7 @@ def _ocr_single_pass(gray) -> str:
         try:
             return pytesseract.image_to_string(gray, lang="eng", config=_TESSERACT_CONFIG)
         except pytesseract.TesseractError:
-            return pytesseract.image_to_string(gray, lang="eng", config="--psm 6 --oem 0")
+            return pytesseract.image_to_string(gray, lang="eng", config="--psm 6 --oem 1")
 
 
 def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
