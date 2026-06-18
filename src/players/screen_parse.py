@@ -21,7 +21,7 @@ _OCR_MAX_CONCURRENT = 3
 _ocr_semaphore = threading.Semaphore(_OCR_MAX_CONCURRENT)
 _PLAYER_COL_WHITELIST = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    "0123456789+-.' "
+    "0123456789+-. "
     "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ"
     "✓✔☑"
 )
