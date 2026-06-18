@@ -77,6 +77,7 @@ TEAM_ALIASES: dict[str, str] = {
     "svezia": "sweden",
     "sud africa": "south africa",
     "bosnia erzegovina": "bosnia herzegovina",
+    "bosnia": "bosnia herzegovina",
     "bosnia and herzegovina": "bosnia herzegovina",
     "costa d avorio": "ivory coast",
     "costa avorio": "ivory coast",

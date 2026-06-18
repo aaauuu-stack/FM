@@ -96,8 +96,9 @@ def infer_starters(
 
     home_names: set[str] = set()
     away_names: set[str] = set()
+    lineup_detail = ""
     if sofascore_event_id:
-        home_names, away_names = fetch_event_starter_names(sofascore_event_id)
+        home_names, away_names, lineup_detail = fetch_event_starter_names(sofascore_event_id)
 
     _mark_sofa_starters(players, home_names, away_names)
 
@@ -120,7 +121,10 @@ def infer_starters(
                 if player.side == side and player.name in xi_names:
                     players[i] = replace(player, starter=True)
     else:
-        notes.append("euristica ruolo+bonus FM (SofaScore non disponibile)")
+        if sofascore_event_id and lineup_detail:
+            notes.append(lineup_detail + " → euristica")
+        else:
+            notes.append("euristica ruolo+bonus FM (SofaScore non disponibile)")
         for side in ("home", "away"):
             side_players = [p for p in players if p.side == side]
             xi_names = _heuristic_xi(side_players)
@@ -143,10 +147,15 @@ def infer_starters(
 
 
 def apply_starter_probabilities(roster: MatchRoster) -> MatchRoster:
-    """Zero event probabilities for non-starters (bench cannot score)."""
+    """
+    Zero event probabilities for non-starters without book quotes.
+
+    Bookmaker P(gol)/P(cartellino) already embed expected minutes and sub role.
+    SofaScore titolari are still used for GK clean sheet and Poisson fallback.
+    """
     updated: list[PlayerBonus] = []
     for player in roster.players:
-        if player.starter:
+        if player.starter or player.has_book_quote:
             updated.append(player)
             continue
         updated.append(

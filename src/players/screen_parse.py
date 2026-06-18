@@ -9,7 +9,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from odds.api_normalize import TEAM_ALIASES, normalize_team
-from players.roster_normalize import finalize_goalkeeper_bonuses
+from players.roster_normalize import normalize_parsed_roster
 from players.models import MatchRoster, PlayerBonus
 from predict.timing import set_progress, timed
 from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
@@ -394,15 +394,12 @@ def _parse_player_entries(line: str, role: str) -> list[tuple[str, int, int, boo
         if name.lower() in {"bonus", "porta", "gol", "fatto", "inviolata"}:
             continue
         bonus = int(match.group(2))
-        tail = line[match.end() : match.end() + 12]
         if role == "GK":
-            second = BONUS_PATTERN.search(tail)
-            if second:
-                bonus_goal = bonus
-                bonus_cs = int(second.group(1))
-            else:
-                bonus_goal = bonus
-                bonus_cs = 0
+            next_start = matches[idx + 1].start() if idx + 1 < len(matches) else len(line)
+            local = line[match.end() : next_start]
+            extra = [int(m.group(1)) for m in BONUS_PATTERN.finditer(local)]
+            bonus_goal = bonus
+            bonus_cs = extra[0] if extra else 0
         else:
             bonus_goal = bonus
             bonus_cs = 0
@@ -538,7 +535,7 @@ def extract_players(text: str, home: str, away: str) -> list[PlayerBonus]:
 
     players = _balance_player_sides(players)
     _validate_roster_sides(players)
-    return finalize_goalkeeper_bonuses(players)
+    return normalize_parsed_roster(players)
 
 
 def _ensure_single_vice(players: list[PlayerBonus]) -> None:

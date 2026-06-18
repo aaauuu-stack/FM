@@ -7,7 +7,7 @@ from typing import Any
 
 from dataclasses import replace
 
-from odds.devig import proportional_devig
+from odds.devig import independent_implied_probs
 from odds.oddspapi_client import fetch_markets_catalog, fetch_odds, oddspapi_configured
 from odds.oddspapi_normalize import lookup_oddspapi_fixture
 from players.models import MatchRoster, PlayerBonus
@@ -58,7 +58,7 @@ def extract_player_yes_probs(
         return {}
 
     medians = {name: float(statistics.median(vals)) for name, vals in prices.items()}
-    return proportional_devig(medians)
+    return independent_implied_probs(medians)
 
 
 def fetch_oddspapi_player_props(

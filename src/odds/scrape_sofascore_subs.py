@@ -25,28 +25,37 @@ class TeamSubProfile:
 def _fetch_team_id_by_name(team_query: str) -> int | None:
     from odds.api_normalize import normalize_team
 
-    slug = normalize_team(team_query).replace(" ", "-")
-    url = f"https://api.sofascore.com/api/v1/team/search?q={slug}"
-    try:
-        result = fetch_json(
-            url,
-            cache_name=f"sofascore_team_search_{slug}.json",
-            extra_headers=_sofascore_headers(),
-        )
-    except RuntimeError:
-        return None
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for raw in (team_query, normalize_team(team_query)):
+        slug = raw.replace(" ", "-")
+        for q in (raw, slug):
+            if q and q not in seen:
+                seen.add(q)
+                candidates.append(q)
 
-    teams = result.data.get("teams") or []
-    for entry in teams:
-        team = entry.get("team") or entry
-        name = str(team.get("name") or "")
-        if teams_match(team_query, name):
-            tid = int(team.get("id") or 0)
-            if tid:
-                return tid
-    if teams:
-        team = teams[0].get("team") or teams[0]
-        return int(team.get("id") or 0) or None
+    for query in candidates:
+        url = f"https://api.sofascore.com/api/v1/team/search?q={query}"
+        try:
+            result = fetch_json(
+                url,
+                cache_name=f"sofascore_team_search_{query}.json",
+                extra_headers=_sofascore_headers(),
+            )
+        except RuntimeError:
+            continue
+
+        teams = result.data.get("teams") or []
+        for entry in teams:
+            team = entry.get("team") or entry
+            name = str(team.get("name") or "")
+            if teams_match(team_query, name):
+                tid = int(team.get("id") or 0)
+                if tid:
+                    return tid
+        if teams:
+            team = teams[0].get("team") or teams[0]
+            return int(team.get("id") or 0) or None
     return None
 
 
@@ -97,15 +106,35 @@ def _fetch_team_recent_events(team_id: int, pages: int = 1) -> list[dict]:
     return events
 
 
-def fetch_event_starter_names(event_id: int) -> tuple[set[str], set[str]]:
+def fetch_event_starter_names(event_id: int) -> tuple[set[str], set[str], str]:
     """Starter names from SofaScore lineups (predicted or confirmed)."""
-    lineups = _fetch_lineups(event_id)
+    lineups, detail = _fetch_lineups_with_detail(event_id)
     if not lineups:
-        return set(), set()
+        return set(), set(), detail
     return (
         _starters_from_lineups(lineups, "home"),
         _starters_from_lineups(lineups, "away"),
+        detail,
     )
+
+
+def _fetch_lineups_with_detail(event_id: int) -> tuple[dict | None, str]:
+    lineups = _fetch_lineups(event_id)
+    if not lineups:
+        return None, "lineups SofaScore non disponibili (HTTP/403 o partita non trovata)"
+    home_n = len(_starters_from_lineups(lineups, "home"))
+    away_n = len(_starters_from_lineups(lineups, "away"))
+    if home_n >= min_sofa_xi_per_side() and away_n >= min_sofa_xi_per_side():
+        return lineups, f"lineups SofaScore ({home_n}+{away_n} titolari)"
+    if home_n or away_n:
+        return lineups, f"lineups SofaScore parziali ({home_n}+{away_n})"
+    return lineups, "lineups SofaScore vuote (probabili solo su web, non in API)"
+
+
+def min_sofa_xi_per_side() -> int:
+    from odds.sofascore_event_lookup import min_sofa_xi_per_side as _min
+
+    return _min()
 
 
 def _sofascore_player_name_variants(player: dict) -> set[str]:
@@ -123,12 +152,27 @@ def _sofascore_player_name_variants(player: dict) -> set[str]:
 
 def _starters_from_lineups(lineups: dict, side_key: str) -> set[str]:
     side = lineups.get(side_key) or {}
+    players_list = side.get("players") or []
+    if not players_list:
+        return set()
+
     names: set[str] = set()
-    for entry in side.get("players") or []:
-        if not isinstance(entry, dict) or entry.get("substitute") is True:
-            continue
-        player = entry.get("player") or {}
-        names.update(_sofascore_player_name_variants(player))
+    has_sub_flag = any(
+        isinstance(entry, dict) and "substitute" in entry for entry in players_list
+    )
+
+    if has_sub_flag:
+        for entry in players_list:
+            if not isinstance(entry, dict) or entry.get("substitute") is True:
+                continue
+            player = entry.get("player") or {}
+            names.update(_sofascore_player_name_variants(player))
+    else:
+        for entry in players_list[:11]:
+            if not isinstance(entry, dict):
+                continue
+            player = entry.get("player") or {}
+            names.update(_sofascore_player_name_variants(player))
     return names
 
 
@@ -164,6 +208,9 @@ def _fetch_lineups(event_id: int) -> dict | None:
     except RuntimeError:
         pass
     return _fetch_predicted_lineups(event_id)
+
+
+def _fetch_incidents(event_id: int) -> list[dict]:
     url = f"https://api.sofascore.com/api/v1/event/{event_id}/incidents"
     try:
         result = fetch_json(
@@ -176,7 +223,7 @@ def _fetch_lineups(event_id: int) -> dict | None:
         return []
 
 
-def _fetch_incidents(event_id: int) -> list[dict]:
+def _first_sub_out_by_side(incidents: list[dict]) -> dict[str, str | None]:
     found: dict[str, str | None] = {"home": None, "away": None}
     sorted_inc = sorted(incidents, key=lambda x: int(x.get("time") or 999))
     for inc in sorted_inc:

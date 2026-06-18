@@ -36,6 +36,11 @@ class PlayerBonus:
     def is_defender(self) -> bool:
         return self.role.upper() == "DEF"
 
+    @property
+    def has_book_quote(self) -> bool:
+        """Matched on bookmaker player market (goal and/or card)."""
+        return self.book_goal_matched or self.book_card_matched
+
     def with_probs(self, **kwargs) -> PlayerBonus:
         """Return a copy with updated probability fields."""
         return replace(self, **kwargs)
@@ -69,7 +74,25 @@ class MatchRoster:
         return marked[0]
 
     def lineup_pool(self) -> list[PlayerBonus]:
-        """Giocatori disponibili per i 4 slot (escluso vice, solo titolari)."""
-        return [
-            p for p in self.players if not p.vice_allenatore and p.starter
-        ]
+        """
+        Giocatori eleggibili per i 4 slot (escluso vice).
+
+        - Con quota book: sempre in pool (P già include minuti/sub).
+        - Senza quota: solo titolari con probabilità (Poisson o CS portiere).
+        """
+        pool: list[PlayerBonus] = []
+        for player in self.players:
+            if player.vice_allenatore:
+                continue
+            if player.has_book_quote:
+                pool.append(player)
+                continue
+            if not player.starter:
+                continue
+            if player.is_goalkeeper:
+                if float(player.p_clean_sheet or 0) > 0:
+                    pool.append(player)
+                continue
+            if float(player.p_goal or 0) > 0 or float(player.p_yellow or 0) > 0:
+                pool.append(player)
+        return pool

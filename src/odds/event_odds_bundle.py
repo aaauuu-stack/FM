@@ -5,7 +5,7 @@ from __future__ import annotations
 import statistics
 
 from odds.api_client import fetch_event_odds
-from odds.devig import proportional_devig
+from odds.devig import independent_implied_probs
 from odds.goalscorer import GOALSCORER_MARKET, _collect_goalscorer_prices
 from odds.player_props import PLAYER_PROP_MARKETS, _parse_event_player_props
 
@@ -35,7 +35,7 @@ def fetch_combined_event_player_odds(
     goalscorer: dict[str, float] = {}
     if raw_gs:
         medians = {n: float(statistics.median(v)) for n, v in raw_gs.items()}
-        goalscorer = proportional_devig(medians)
+        goalscorer = independent_implied_probs(medians)
 
     event_props = _parse_event_player_props(payload)
     return goalscorer, event_props

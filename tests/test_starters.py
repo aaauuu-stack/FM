@@ -126,7 +126,7 @@ def test_sofa_complete_lineup_excludes_backup_gk():
     roster = MatchRoster("T", "Svizzera", "Bosnia", players=players)
     with patch(
         "players.starters.fetch_event_starter_names",
-        return_value=(sofa_home, sofa_away),
+        return_value=(sofa_home, sofa_away, "lineups SofaScore (11+11 titolari)"),
     ):
         updated, note = infer_starters(roster, sofascore_event_id=12345)
 
@@ -142,6 +142,48 @@ def test_sofa_complete_lineup_excludes_backup_gk():
     assert not hadzikic.starter
     assert vasilj.starter
     assert "SofaScore formazioni" in note
+
+
+def test_bench_sub_with_book_goal_stays_in_pool():
+    """Sub quotato dal book: P(gol) resta, entra nel pool formazione."""
+    from players.starters import apply_starter_probabilities
+
+    players = [
+        PlayerBonus("Kobel", "home", "GK", bonus_goal=5, bonus_clean_sheet=5, starter=True),
+        PlayerBonus("Embolo", "home", "FWD", bonus_goal=5, starter=True, p_goal=0.48, book_goal_matched=True),
+        PlayerBonus(
+            "Amdouni",
+            "home",
+            "FWD",
+            bonus_goal=7,
+            starter=False,
+            p_goal=0.37,
+            book_goal_matched=True,
+        ),
+        PlayerBonus("Ndoye", "home", "MID", bonus_goal=6, vice_allenatore=True),
+        PlayerBonus("Vasilj", "away", "GK", bonus_goal=6, bonus_clean_sheet=6, starter=True),
+        PlayerBonus("Dzeko", "away", "FWD", bonus_goal=6, starter=True, p_goal=0.22, book_goal_matched=True),
+        PlayerBonus("Xhaka", "home", "MID", bonus_goal=8, starter=True, p_goal=0.05),
+        PlayerBonus("Dedic", "away", "DEF", bonus_goal=8, starter=True),
+    ]
+    roster = MatchRoster("T", "Svizzera", "Bosnia", players=players)
+    roster = apply_starter_probabilities(roster)
+
+    amdouni = next(p for p in roster.players if p.name == "Amdouni")
+    assert float(amdouni.p_goal or 0) == 0.37
+    pool_names = {p.name for p in roster.lineup_pool()}
+    assert "Amdouni" in pool_names
+    assert "Embolo" in pool_names
+
+
+def test_bench_without_book_zeroed():
+    roster = resolve_starters(_swiss_bosnia_roster())
+    bench_fwd = PlayerBonus("BenchFwd", "home", "FWD", bonus_goal=12, p_goal=0.08)
+    roster.players.append(bench_fwd)
+    roster = apply_starter_probabilities(roster)
+    bench = next(p for p in roster.players if p.name == "BenchFwd")
+    assert float(bench.p_goal or 0) == 0.0
+    assert "BenchFwd" not in {p.name for p in roster.lineup_pool()}
 
 
 def test_card_quote_does_not_mark_starter():

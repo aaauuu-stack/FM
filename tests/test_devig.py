@@ -1,6 +1,6 @@
 import pytest
 
-from odds.devig import devig_two_way, proportional_devig
+from odds.devig import devig_two_way, independent_implied_probs, proportional_devig
 
 
 def test_proportional_devig_sums_to_one():
@@ -12,6 +12,33 @@ def test_proportional_devig_sums_to_one():
 def test_proportional_devig_ordering():
     probs = proportional_devig({"home": 1.5, "draw": 4.0, "away": 6.0})
     assert probs["home"] > probs["draw"] > probs["away"]
+
+
+def test_independent_implied_probs_not_normalized():
+    odds = {
+        "Embolo": 2.095,
+        "Itten": 2.67,
+        "Amdouni": 2.73,
+        "Ndoye": 3.6,
+        "Tabakovic": 5.0,
+    }
+    probs = independent_implied_probs(odds)
+    assert abs(probs["Embolo"] - 0.4774) < 0.001
+    assert abs(probs["Ndoye"] - (1 / 3.6)) < 0.001
+    assert sum(probs.values()) > 1.0
+
+
+def test_old_goalscorer_devig_would_understate_embolo():
+    odds = {
+        "Embolo": 2.095,
+        "Itten": 2.67,
+        "Amdouni": 2.73,
+        "Ndoye": 3.6,
+        "Tabakovic": 5.0,
+    }
+    wrong = proportional_devig(odds)
+    right = independent_implied_probs(odds)
+    assert right["Embolo"] > wrong["Embolo"] * 1.5
 
 
 def test_invalid_odds_rejected():

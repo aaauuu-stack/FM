@@ -7,7 +7,7 @@ from typing import Any
 
 from dataclasses import replace
 
-from odds.devig import proportional_devig
+from odds.devig import independent_implied_probs, proportional_devig
 from odds.scrape_sofascore import _choice_decimal, _market_name
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
@@ -55,7 +55,7 @@ def extract_goalscorer_from_sofa_markets(markets: list[dict[str, Any]]) -> dict[
     if not prices:
         return {}
     medians = {name: float(statistics.median(vals)) for name, vals in prices.items()}
-    return proportional_devig(medians)
+    return independent_implied_probs(medians)
 
 
 def extract_card_probs_from_sofa_markets(markets: list[dict[str, Any]]) -> dict[str, float]:
@@ -76,7 +76,7 @@ def extract_card_probs_from_sofa_markets(markets: list[dict[str, Any]]) -> dict[
     if not prices:
         return {}
     medians = {name: float(statistics.median(vals)) for name, vals in prices.items()}
-    return proportional_devig(medians)
+    return independent_implied_probs(medians)
 
 
 def extract_first_card_from_sofa_markets(markets: list[dict[str, Any]]) -> dict[str, float]:
@@ -120,7 +120,7 @@ def fetch_sofascore_player_props(
         bundle.goal_probs or {},
         bundle.card_probs or {},
         {},
-        bundle.props_note or "SofaScore: sofascoreId assente su OddsPapi",
+        bundle.props_note or "SofaScore: event id non trovato (OddsPapi/calendario)",
     )
 
 

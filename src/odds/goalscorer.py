@@ -10,7 +10,7 @@ from dataclasses import replace
 
 from odds.api_client import fetch_odds
 from odds.api_normalize import find_event
-from odds.devig import proportional_devig
+from odds.devig import independent_implied_probs
 from odds.oddspapi_player_props import attach_oddspapi_player_props
 from odds.player_events import attach_event_probs
 from odds.player_props import attach_player_props_from_api, apply_event_player_props
@@ -89,7 +89,7 @@ def fetch_goalscorer_probabilities(
         return {}
 
     medians = {name: float(statistics.median(vals)) for name, vals in raw_prices.items()}
-    return proportional_devig(medians)
+    return independent_implied_probs(medians)
 
 
 def attach_goalscorer_odds(
@@ -146,7 +146,12 @@ def _player_goal_weight(player: PlayerBonus, roster: MatchRoster) -> float:
     return base * fm_factor
 
 
-def attach_poisson_goal_estimates(roster: MatchRoster, match) -> MatchRoster:
+def attach_poisson_goal_estimates(
+    roster: MatchRoster,
+    match,
+    *,
+    starters_only: bool = False,
+) -> MatchRoster:
     """Estimate P(goal) from team xG + national stats / role weights."""
     lambda_home, lambda_away = estimate_team_expected_goals(match)
     team_lambda = {"home": lambda_home, "away": lambda_away}
@@ -158,6 +163,12 @@ def attach_poisson_goal_estimates(roster: MatchRoster, match) -> MatchRoster:
     updated: list[PlayerBonus] = []
     for player in roster.players:
         if player.is_goalkeeper or float(player.p_goal or 0.0) > 0:
+            updated.append(player)
+            continue
+        if starters_only and not player.starter:
+            updated.append(player)
+            continue
+        if player.book_goal_matched:
             updated.append(player)
             continue
         w = _player_goal_weight(player, roster)
@@ -190,9 +201,25 @@ def attach_goal_probs(
     force_refresh: bool = False,
     goalscorer_probs: dict[str, float] | None = None,
     event_player_props: dict[str, dict[str, float]] | None = None,
+    use_poisson: bool = True,
+    starters_only_poisson: bool = False,
+    poisson_only: bool = False,
 ) -> tuple[MatchRoster, str]:
     """Fill missing P(gol) per giocatore: API, poi Poisson solo sui vuoti."""
     notes: list[str] = []
+
+    if poisson_only:
+        if use_poisson and _roster_needs_goal_fill(roster):
+            roster = attach_poisson_goal_estimates(
+                roster, match, starters_only=starters_only_poisson
+            )
+            label = (
+                "Poisson titolari senza quota gol"
+                if starters_only_poisson
+                else "Poisson ultimo fallback (solo giocatori senza quota gol)"
+            )
+            notes.append(label)
+        return roster, "; ".join(notes) if notes else ""
 
     if _roster_needs_goal_fill(roster):
         if goalscorer_probs is not None:
@@ -213,9 +240,16 @@ def attach_goal_probs(
         if props_note:
             notes.append(props_note)
 
-    if _roster_needs_goal_fill(roster):
-        roster = attach_poisson_goal_estimates(roster, match)
-        notes.append("Poisson ultimo fallback (solo giocatori senza quota gol)")
+    if use_poisson and _roster_needs_goal_fill(roster):
+        roster = attach_poisson_goal_estimates(
+            roster, match, starters_only=starters_only_poisson
+        )
+        label = (
+            "Poisson titolari senza quota gol"
+            if starters_only_poisson
+            else "Poisson ultimo fallback (solo giocatori senza quota gol)"
+        )
+        notes.append(label)
 
     if not notes:
         return roster, "P(gol) gia da quote/scrape per tutti"
@@ -258,6 +292,8 @@ def attach_all_player_probs(
     sofa_props: tuple | None = None,
     goalscorer_probs: dict[str, float] | None = None,
     event_player_props: dict[str, dict[str, float]] | None = None,
+    use_poisson: bool = True,
+    starters_only_poisson: bool = False,
 ) -> tuple[MatchRoster, str]:
     """Attach player probs: OddsPapi + SofaScore scrape, API, rigoristi, malus."""
     notes: list[str] = []
@@ -285,6 +321,8 @@ def attach_all_player_probs(
         force_refresh=force_refresh,
         goalscorer_probs=goalscorer_probs,
         event_player_props=event_player_props,
+        use_poisson=use_poisson,
+        starters_only_poisson=starters_only_poisson,
     )
     notes.append(goal_note)
 

@@ -9,7 +9,7 @@ from dataclasses import replace
 
 from odds.api_client import fetch_event_odds, fetch_odds
 from odds.api_normalize import find_event
-from odds.devig import proportional_devig
+from odds.devig import independent_implied_probs
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
 
@@ -45,7 +45,7 @@ def _devig_props(raw: dict[str, list[float]]) -> dict[str, float]:
     if not raw:
         return {}
     medians = {name: float(statistics.median(vals)) for name, vals in raw.items()}
-    return proportional_devig(medians)
+    return independent_implied_probs(medians)
 
 
 def _parse_event_player_props(payload: dict[str, Any]) -> dict[str, dict[str, float]] | None:

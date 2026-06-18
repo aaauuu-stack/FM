@@ -98,8 +98,13 @@ def fetch_sofascore_bundle(
         home_query, away_query, kickoff_iso
     )
     if resolved_id is None:
-        bundle.props_note = "SofaScore: sofascoreId assente su OddsPapi"
+        bundle.props_note = "SofaScore: event id non trovato (OddsPapi/calendario)"
         return bundle
+
+    from_oddspapi = event_id is not None or (
+        sofascore_event_id_from_oddspapi(home_query, away_query, kickoff_iso) == resolved_id
+    )
+    id_source = "OddsPapi" if from_oddspapi else f"calendario #{resolved_id}"
 
     if not any((need_match_cs, need_goal_props, need_card_props, need_first_card)):
         bundle.event_id = resolved_id
@@ -130,7 +135,9 @@ def fetch_sofascore_bundle(
         bundle.goal_probs = goal_probs if need_goal_props else {}
         bundle.card_probs = card_probs if need_card_props else {}
         bundle.props_note = (
-            "SofaScore lite (" + ", ".join(notes) + ")" if notes else "SofaScore lite: mercati vuoti"
+            "SofaScore lite (" + ", ".join(notes) + f", {id_source})"
+            if notes
+            else f"SofaScore lite: mercati vuoti ({id_source})"
         )
 
     if need_first_card and markets:
