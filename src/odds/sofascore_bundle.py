@@ -1,22 +1,21 @@
-"""Single SofaScore event fetch — CS, player props, first card, team ids."""
+"""Single SofaScore /odds/1/all fetch — lite mode (OddsPapi event id only)."""
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 from odds.match_loader import MatchOdds
+from odds.oddspapi_client import oddspapi_configured
+from odds.oddspapi_normalize import lookup_oddspapi_fixture
 from odds.scrape_sofascore import (
     _extract_ht_markets,
     _extract_ft_markets,
-    _sofascore_event_id,
     _sofascore_headers,
 )
 from odds.scrape_client import fetch_json
 from odds.scrape_sofascore_players import (
     extract_card_probs_from_sofa_markets,
     extract_goalscorer_from_sofa_markets,
-    fetch_sofascore_team_player_stats,
 )
 from odds.event_kl_model import _extract_first_card_sofa_markets
 
@@ -26,26 +25,26 @@ class SofaScoreBundle:
     match_odds: MatchOdds | None = None
     goal_probs: dict[str, float] | None = None
     card_probs: dict[str, float] | None = None
-    stats: dict | None = None
     props_note: str = ""
     first_card_probs: dict[str, float] | None = None
     first_card_note: str = ""
     event_id: int | None = None
 
 
-def _fetch_event_teams(event_id: int) -> tuple[int, int] | None:
-    url = f"https://api.sofascore.com/api/v1/event/{event_id}"
-    result = fetch_json(
-        url,
-        cache_name=f"sofascore_event_{event_id}.json",
-        extra_headers=_sofascore_headers(),
-    )
-    event = result.data.get("event") or result.data
-    home_id = int((event.get("homeTeam") or {}).get("id") or 0)
-    away_id = int((event.get("awayTeam") or {}).get("id") or 0)
-    if home_id and away_id:
-        return home_id, away_id
-    return None
+def sofascore_event_id_from_oddspapi(
+    home_query: str,
+    away_query: str,
+    kickoff_iso: str | None = None,
+) -> int | None:
+    """SofaScore event id via OddsPapi fixture only (no calendario SofaScore)."""
+    if not oddspapi_configured():
+        return None
+    try:
+        fixture = lookup_oddspapi_fixture(home_query, away_query, kickoff_iso)
+        raw = (fixture.get("externalProviders") or {}).get("sofascoreId")
+        return int(raw) if raw else None
+    except (ValueError, TypeError, RuntimeError):
+        return None
 
 
 def _fetch_odds_markets(event_id: int) -> list:
@@ -58,35 +57,49 @@ def _fetch_odds_markets(event_id: int) -> list:
     return odds_result.data.get("markets") or []
 
 
+def fetch_sofascore_match_odds_from_event(event_id: int) -> MatchOdds:
+    """Correct score FT/HT from cached odds payload (one HTTP call)."""
+    markets = _fetch_odds_markets(event_id)
+    if not markets:
+        raise ValueError(f"SofaScore senza mercati quote per event {event_id}")
+    ft = _extract_ft_markets(markets)
+    ht = _extract_ht_markets(markets)
+    if not ft and not ht:
+        raise ValueError(f"SofaScore senza correct score per event {event_id}")
+    return MatchOdds(correct_score=ft, half_time_correct_score=ht)
+
+
 def fetch_sofascore_bundle(
     home_query: str,
     away_query: str,
     kickoff_iso: str | None = None,
     *,
     event_id: int | None = None,
-    need_match_cs: bool = True,
-    need_props: bool = True,
-    need_first_card: bool = True,
+    need_match_cs: bool = False,
+    need_goal_props: bool = True,
+    need_card_props: bool = True,
+    need_first_card: bool = False,
 ) -> SofaScoreBundle:
-    """One event id + odds payload for all SofaScore scrape paths."""
+    """
+    One SofaScore HTTP call when OddsPapi provides sofascoreId.
+
+    No calendario, no metadati evento, no stats NT.
+    """
     bundle = SofaScoreBundle()
-    resolved_id = event_id or _sofascore_event_id(home_query, away_query, kickoff_iso)
+    resolved_id = event_id or sofascore_event_id_from_oddspapi(
+        home_query, away_query, kickoff_iso
+    )
     if resolved_id is None:
-        bundle.props_note = "SofaScore: evento non trovato"
+        bundle.props_note = "SofaScore: sofascoreId assente su OddsPapi"
+        return bundle
+
+    if not any((need_match_cs, need_goal_props, need_card_props, need_first_card)):
+        bundle.event_id = resolved_id
+        bundle.props_note = "SofaScore: nessun dato richiesto"
         return bundle
 
     bundle.event_id = resolved_id
-    markets: list = []
-    teams: tuple[int, int] | None = None
-
-    if need_props:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            f_odds = pool.submit(_fetch_odds_markets, resolved_id)
-            f_teams = pool.submit(_fetch_event_teams, resolved_id)
-            markets = f_odds.result()
-            teams = f_teams.result()
-    else:
-        markets = _fetch_odds_markets(resolved_id)
+    markets = _fetch_odds_markets(resolved_id)
 
     if need_match_cs and markets:
         ft = _extract_ft_markets(markets)
@@ -95,32 +108,21 @@ def fetch_sofascore_bundle(
             bundle.match_odds = MatchOdds(correct_score=ft, half_time_correct_score=ht)
 
     notes: list[str] = []
-    if need_props:
-        goal_probs = extract_goalscorer_from_sofa_markets(markets) if markets else {}
-        card_probs = extract_card_probs_from_sofa_markets(markets) if markets else {}
-        stats: dict = {}
-        try:
-            if teams:
-                home_id, away_id = teams
-                with ThreadPoolExecutor(max_workers=2) as pool:
-                    f_home = pool.submit(fetch_sofascore_team_player_stats, home_id)
-                    f_away = pool.submit(fetch_sofascore_team_player_stats, away_id)
-                    stats.update(f_home.result())
-                    stats.update(f_away.result())
-                if stats:
-                    notes.append(f"stats NT {len(stats)} giocatori")
-        except RuntimeError as exc:
-            notes.append(f"stats: {exc}")
-
+    if need_goal_props or need_card_props:
+        goal_probs = (
+            extract_goalscorer_from_sofa_markets(markets) if need_goal_props and markets else {}
+        )
+        card_probs = (
+            extract_card_probs_from_sofa_markets(markets) if need_card_props and markets else {}
+        )
         if goal_probs:
             notes.append(f"quote gol {len(goal_probs)}")
         if card_probs:
             notes.append(f"quote cartellini {len(card_probs)}")
-        bundle.goal_probs = goal_probs
-        bundle.card_probs = card_probs
-        bundle.stats = stats
+        bundle.goal_probs = goal_probs if need_goal_props else {}
+        bundle.card_probs = card_probs if need_card_props else {}
         bundle.props_note = (
-            "SofaScore scrape (" + ", ".join(notes) + ")" if notes else "SofaScore: nessun dato"
+            "SofaScore lite (" + ", ".join(notes) + ")" if notes else "SofaScore lite: mercati vuoti"
         )
 
     if need_first_card and markets:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -13,6 +14,17 @@ from scoring.lineup_rules import VICE_MIN_BONUS_GOAL
 
 HOME_COL_MARKER = "__HOME_COL__"
 AWAY_COL_MARKER = "__AWAY_COL__"
+
+# Resize + Tesseract tuning (server-side speed)
+OCR_MAX_SIDE = 1200
+_OCR_MAX_CONCURRENT = 3
+_ocr_semaphore = threading.Semaphore(_OCR_MAX_CONCURRENT)
+_PLAYER_COL_WHITELIST = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    "0123456789+-.' "
+    "ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÑÒÓÔÕÖØÙÚÛÜÝàáâãäåæçèéêëìíîïñòóôõöøùúûüýÿ"
+    "✓✔☑"
+)
 
 
 def _default_match_id(home: str, away: str) -> str:
@@ -95,7 +107,7 @@ def _prepare_gray_image(data: bytes):
     image = ImageOps.exif_transpose(image)
     if image.mode not in ("RGB", "L"):
         image = image.convert("RGB")
-    max_side = 1600
+    max_side = OCR_MAX_SIDE
     width, height = image.size
     if max(width, height) > max_side:
         scale = max_side / max(width, height)
@@ -106,16 +118,29 @@ def _prepare_gray_image(data: bytes):
     return image, image.convert("L")
 
 
-def _ocr_region(gray, box, *, psm: int = 6) -> str:
+def _ocr_region(
+    gray,
+    box,
+    *,
+    psm: int = 6,
+    lang: str = "ita+eng",
+    whitelist: str | None = None,
+) -> str:
     import pytesseract
 
     crop = gray.crop(box)
     crop = crop.point(lambda p: 255 if p > 140 else 0) if box[1] < gray.size[1] * 0.25 else crop
-    config = f"--psm {psm}"
-    try:
-        return pytesseract.image_to_string(crop, lang="ita+eng", config=config)
-    except pytesseract.TesseractError:
-        return pytesseract.image_to_string(crop, lang="eng", config=config)
+    config_parts = [f"--psm {psm}", "--oem 1"]
+    if whitelist:
+        config_parts.append(f"-c tessedit_char_whitelist={whitelist}")
+    config = " ".join(config_parts)
+    with _ocr_semaphore:
+        try:
+            return pytesseract.image_to_string(crop, lang=lang, config=config)
+        except pytesseract.TesseractError:
+            if lang != "eng":
+                return pytesseract.image_to_string(crop, lang="eng", config=config)
+            raise
 
 
 def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
@@ -138,15 +163,45 @@ def ocr_image_bytes(data: bytes, *, include_header: bool = True) -> str:
     mid = width // 2
     gutter = max(8, width // 40)
 
-    header_text = (
-        _ocr_region(gray, (0, 0, width, header_h), psm=7) if include_header else ""
+    jobs: list[tuple[str, tuple[int, int, int, int], int, str, str | None]] = []
+    if include_header:
+        jobs.append(("header", (0, 0, width, header_h), 7, "ita+eng", None))
+    jobs.extend(
+        [
+            (
+                "home",
+                (0, body_top, mid - gutter, height),
+                6,
+                "eng",
+                _PLAYER_COL_WHITELIST,
+            ),
+            (
+                "away",
+                (mid + gutter, body_top, width, height),
+                6,
+                "eng",
+                _PLAYER_COL_WHITELIST,
+            ),
+        ]
     )
-    home_col = _ocr_region(gray, (0, body_top, mid - gutter, height), psm=6)
-    away_col = _ocr_region(gray, (mid + gutter, body_top, width, height), psm=6)
+
+    results: dict[str, str] = {}
+    workers = min(_OCR_MAX_CONCURRENT, len(jobs))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            name: pool.submit(_ocr_region, gray, box, psm=psm, lang=lang, whitelist=wl)
+            for name, box, psm, lang, wl in jobs
+        }
+        for name, future in futures.items():
+            results[name] = future.result().strip()
+
+    header_text = results.get("header", "")
+    home_col = results.get("home", "")
+    away_col = results.get("away", "")
 
     return (
-        f"{header_text.strip()}\n{HOME_COL_MARKER}\n{home_col.strip()}\n"
-        f"{AWAY_COL_MARKER}\n{away_col.strip()}"
+        f"{header_text}\n{HOME_COL_MARKER}\n{home_col}\n"
+        f"{AWAY_COL_MARKER}\n{away_col}"
     )
 
 
@@ -156,20 +211,10 @@ def ocr_images(images: list[bytes]) -> str:
     blobs = [b for b in images if b]
     if not blobs:
         return ""
-    workers = min(3, len(blobs))
-    if workers <= 1:
-        parts = [ocr_image_bytes(blobs[0], include_header=True).strip()]
-        if len(blobs) > 1:
-            parts.extend(
-                ocr_image_bytes(b, include_header=False).strip() for b in blobs[1:]
-            )
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            first = pool.submit(ocr_image_bytes, blobs[0], include_header=True)
-            rest = [
-                pool.submit(ocr_image_bytes, b, include_header=False) for b in blobs[1:]
-            ]
-            parts = [first.result().strip()] + [f.result().strip() for f in rest]
+    parts: list[str] = []
+    parts.append(ocr_image_bytes(blobs[0], include_header=True).strip())
+    for blob in blobs[1:]:
+        parts.append(ocr_image_bytes(blob, include_header=False).strip())
     return "\n\n".join(p for p in parts if p)
 
 

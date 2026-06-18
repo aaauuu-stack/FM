@@ -16,6 +16,7 @@ def fetch_scraped_match_odds(
     existing: MatchOdds,
     *,
     kickoff_iso: str | None = None,
+    sofascore_event_id: int | None = None,
 ) -> tuple[MatchOdds, list[str]]:
     """
     Fetch only missing correct-score fields from web sources.
@@ -29,7 +30,12 @@ def fetch_scraped_match_odds(
     sources: list[str] = []
 
     try:
-        sofa = fetch_sofascore_match_odds(home_query, away_query, kickoff_iso=kickoff_iso)
+        sofa = fetch_sofascore_match_odds(
+            home_query,
+            away_query,
+            kickoff_iso=kickoff_iso,
+            event_id=sofascore_event_id,
+        )
         if not existing.correct_score and sofa.correct_score:
             overlay.correct_score = dict(sofa.correct_score)
         if not existing.half_time_correct_score and sofa.half_time_correct_score:
@@ -40,6 +46,11 @@ def fetch_scraped_match_odds(
         pass
 
     if not overlay.correct_score and not overlay.half_time_correct_score:
+        if sofascore_event_id is None:
+            raise ValueError(
+                f"Scraping CS non disponibile per {home_query} vs {away_query}: "
+                "manca sofascoreId su OddsPapi."
+            )
         hint = ""
         try:
             import curl_cffi  # noqa: F401

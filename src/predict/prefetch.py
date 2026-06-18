@@ -52,6 +52,40 @@ class MatchPrefetch:
     first_card: tuple[dict[str, float], str] | None = None
 
 
+def _fetch_sofa_lite(
+    roster: MatchRoster,
+    kickoff: str,
+    oddspapi_bundle: OddsPapiBundle | None,
+    match,
+    *,
+    use_scrape: bool,
+) -> SofaScoreBundle | None:
+    if not use_scrape:
+        return None
+
+    sofa_id = oddspapi_bundle.sofascore_event_id if oddspapi_bundle else None
+    if sofa_id is None:
+        return None
+
+    need_cs = _needs_correct_score(match.odds)
+    op_goals = bool(oddspapi_bundle and oddspapi_bundle.goal_probs)
+    op_cards = bool(oddspapi_bundle and oddspapi_bundle.card_probs)
+    need_fc = not bool(oddspapi_bundle and oddspapi_bundle.first_card_probs)
+
+    if need_cs or not op_goals or not op_cards or need_fc:
+        return fetch_sofascore_bundle(
+            roster.home,
+            roster.away,
+            kickoff,
+            event_id=sofa_id,
+            need_match_cs=need_cs,
+            need_goal_props=not op_goals,
+            need_card_props=not op_cards,
+            need_first_card=need_fc,
+        )
+    return None
+
+
 def build_match_parallel(
     roster: MatchRoster,
     *,
@@ -64,7 +98,7 @@ def build_match_parallel(
     """
     Fetch The Odds API once, then enrich match + prefetch player/L data in parallel.
 
-    Storico sostituzioni (K) skipped for now — uses role/context fallback.
+    SofaScore lite: 1 HTTP call, solo se OddsPapi espone sofascoreId.
 
     Returns (match, source_note, requests_remaining, event_id, prefetch).
     """
@@ -75,12 +109,11 @@ def build_match_parallel(
     kickoff = roster.kickoff or str(event.get("commence_time", ""))
     event_id = str(event.get("id", ""))
 
-    need_scrape_match = use_scrape and _needs_correct_score(match.odds)
     prefetch = MatchPrefetch()
     oddspapi_bundle: OddsPapiBundle | None = None
     sofa_bundle: SofaScoreBundle | None = None
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         f_event_odds = (
             pool.submit(
                 fetch_combined_event_player_odds,
@@ -107,34 +140,12 @@ def build_match_parallel(
             else None
         )
 
-        f_sofa = (
-            pool.submit(
-                fetch_sofascore_bundle,
-                roster.home,
-                roster.away,
-                kickoff,
-                event_id=None,
-                need_match_cs=need_scrape_match,
-                need_props=True,
-                need_first_card=True,
-            )
-            if use_scrape
-            else None
-        )
-
         if f_oddspapi is not None:
             with timed("oddspapi_bundle"):
                 try:
                     oddspapi_bundle = f_oddspapi.result()
                 except (RuntimeError, ValueError) as exc:
                     print(f"  [warn] OddsPapi non disponibile: {exc}", file=sys.stderr)
-
-        if f_sofa is not None:
-            with timed("sofascore_bundle"):
-                try:
-                    sofa_bundle = f_sofa.result()
-                except (RuntimeError, ValueError) as exc:
-                    print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
 
         sources = ["The Odds API"]
 
@@ -147,7 +158,20 @@ def build_match_parallel(
                 file=sys.stderr,
             )
 
-        if need_scrape_match and sofa_bundle and sofa_bundle.match_odds:
+        if use_scrape:
+            with timed("sofascore_bundle"):
+                try:
+                    sofa_bundle = _fetch_sofa_lite(
+                        roster,
+                        kickoff,
+                        oddspapi_bundle,
+                        match,
+                        use_scrape=True,
+                    )
+                except (RuntimeError, ValueError) as exc:
+                    print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
+
+        if sofa_bundle and sofa_bundle.match_odds:
             match = merge_match_data_fill_gaps(match, sofa_bundle.match_odds)
             if (
                 sofa_bundle.match_odds.correct_score
@@ -166,7 +190,7 @@ def build_match_parallel(
             prefetch.sofa_props = (
                 sofa_bundle.goal_probs,
                 sofa_bundle.card_probs or {},
-                sofa_bundle.stats or {},
+                {},
                 sofa_bundle.props_note,
             )
 

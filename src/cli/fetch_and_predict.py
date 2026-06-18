@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from concurrent.futures import ThreadPoolExecutor
 
 from odds.api_client import fetch_odds, get_api_key, load_env_file
 from odds.api_normalize import event_to_match_data, find_event, list_events
@@ -12,6 +11,7 @@ from odds.match_loader import MatchOdds
 from odds.merge_providers import merge_match_data, merge_match_data_fill_gaps
 from odds.oddspapi_client import oddspapi_configured
 from odds.oddspapi_normalize import fetch_oddspapi_match_odds
+from odds.sofascore_bundle import sofascore_event_id_from_oddspapi
 from odds.scrape_normalize import fetch_scraped_match_odds
 from predict.ev_report import print_ev_report, result_recommendation_to_report
 from predict.result_ev import rank_predictions
@@ -39,43 +39,35 @@ def _build_match_from_apis(
     kickoff = kickoff_iso or str(event.get("commence_time", ""))
 
     sources = ["The Odds API"]
-    op_future = None
-    scrape_future = None
+    sofa_event_id: int | None = None
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        if use_oddspapi and oddspapi_configured():
-            op_future = pool.submit(
-                fetch_oddspapi_match_odds, home, away, kickoff_iso=kickoff
-            )
-        if use_scrape and _needs_correct_score(match.odds):
-            scrape_future = pool.submit(
-                fetch_scraped_match_odds,
+    if use_oddspapi and oddspapi_configured():
+        try:
+            op_odds = fetch_oddspapi_match_odds(home, away, kickoff_iso=kickoff)
+            match = merge_match_data(match, op_odds)
+            sources.append("OddsPapi")
+            sofa_event_id = sofascore_event_id_from_oddspapi(home, away, kickoff)
+        except (RuntimeError, ValueError) as exc:
+            print(f"  [warn] OddsPapi non disponibile: {exc}", file=sys.stderr)
+    elif use_oddspapi:
+        print(
+            "  [warn] OddsPapi non configurato — vedi docs/API_SETUP.md",
+            file=sys.stderr,
+        )
+
+    if use_scrape and _needs_correct_score(match.odds) and sofa_event_id:
+        try:
+            scrape_overlay, scrape_sources = fetch_scraped_match_odds(
                 home,
                 away,
                 match.odds,
                 kickoff_iso=kickoff,
+                sofascore_event_id=sofa_event_id,
             )
-
-        if op_future is not None:
-            try:
-                op_odds = op_future.result()
-                match = merge_match_data(match, op_odds)
-                sources.append("OddsPapi")
-            except (RuntimeError, ValueError) as exc:
-                print(f"  [warn] OddsPapi non disponibile: {exc}", file=sys.stderr)
-        elif use_oddspapi:
-            print(
-                "  [warn] OddsPapi non configurato — vedi docs/API_SETUP.md",
-                file=sys.stderr,
-            )
-
-        if scrape_future is not None:
-            try:
-                scrape_overlay, scrape_sources = scrape_future.result()
-                match = merge_match_data_fill_gaps(match, scrape_overlay)
-                sources.extend(scrape_sources)
-            except ValueError as exc:
-                print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
+            match = merge_match_data_fill_gaps(match, scrape_overlay)
+            sources.extend(scrape_sources)
+        except ValueError as exc:
+            print(f"  [warn] Scraping non disponibile: {exc}", file=sys.stderr)
 
     cache_note = "cache" if fetch_result.from_cache else "live"
     source_note = f"{' + '.join(sources)} ({cache_note})"

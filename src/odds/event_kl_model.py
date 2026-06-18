@@ -12,8 +12,6 @@ from odds.goalscorer import estimate_team_expected_goals
 from odds.oddspapi_client import fetch_markets_catalog, fetch_odds, oddspapi_configured
 from odds.oddspapi_normalize import lookup_oddspapi_fixture
 from odds.oddspapi_player_props import extract_player_yes_probs
-from odds.scrape_client import fetch_json
-from odds.scrape_sofascore import _sofascore_event_id, _sofascore_headers
 from odds.scrape_sofascore_players import _choice_decimal
 from odds.scrape_sofascore_subs import TeamSubProfile, fetch_team_sub_profile
 from players.models import MatchRoster, PlayerBonus
@@ -199,7 +197,7 @@ def _extract_first_card_sofa_markets(markets: list) -> dict[str, float]:
 def fetch_first_card_bookmaker_probs(
     roster: MatchRoster,
 ) -> tuple[dict[str, float], str]:
-    """Quote 'first player booked' from OddsPapi + SofaScore (point 6)."""
+    """Quote 'first player booked' from OddsPapi (SofaScore solo via prefetch se manca)."""
     probs: dict[str, float] = {}
     notes: list[str] = []
 
@@ -218,24 +216,6 @@ def fetch_first_card_bookmaker_probs(
                     notes.append(f"OddsPapi first card ({len(oddspapi_probs)})")
         except (RuntimeError, ValueError):
             pass
-
-    try:
-        event_id = _sofascore_event_id(roster.home, roster.away, roster.kickoff)
-        if event_id:
-            url = f"https://api.sofascore.com/api/v1/event/{event_id}/odds/1/all"
-            result = fetch_json(
-                url,
-                cache_name=f"sofascore_odds_{event_id}.json",
-                extra_headers=_sofascore_headers(),
-            )
-            sofa = _extract_first_card_sofa_markets(result.data.get("markets") or [])
-            for name, p in sofa.items():
-                if name not in probs:
-                    probs[name] = p
-            if sofa:
-                notes.append(f"SofaScore first card ({len(sofa)})")
-    except RuntimeError:
-        pass
 
     return probs, (" | ".join(notes) if notes else "")
 
