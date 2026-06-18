@@ -15,9 +15,9 @@ from odds.scrape_sofascore import (
 from odds.scrape_client import fetch_json
 from odds.scrape_sofascore_players import (
     extract_card_probs_from_sofa_markets,
+    extract_first_card_from_sofa_markets,
     extract_goalscorer_from_sofa_markets,
 )
-from odds.event_kl_model import _extract_first_card_sofa_markets
 
 
 @dataclass
@@ -31,6 +31,14 @@ class SofaScoreBundle:
     event_id: int | None = None
 
 
+def sofascore_id_from_fixture(fixture: dict) -> int | None:
+    try:
+        raw = (fixture.get("externalProviders") or {}).get("sofascoreId")
+        return int(raw) if raw else None
+    except (TypeError, ValueError):
+        return None
+
+
 def sofascore_event_id_from_oddspapi(
     home_query: str,
     away_query: str,
@@ -41,8 +49,7 @@ def sofascore_event_id_from_oddspapi(
         return None
     try:
         fixture = lookup_oddspapi_fixture(home_query, away_query, kickoff_iso)
-        raw = (fixture.get("externalProviders") or {}).get("sofascoreId")
-        return int(raw) if raw else None
+        return sofascore_id_from_fixture(fixture)
     except (ValueError, TypeError, RuntimeError):
         return None
 
@@ -126,7 +133,7 @@ def fetch_sofascore_bundle(
         )
 
     if need_first_card and markets:
-        sofa_fc = _extract_first_card_sofa_markets(markets)
+        sofa_fc = extract_first_card_from_sofa_markets(markets)
         if sofa_fc:
             bundle.first_card_probs = sofa_fc
             bundle.first_card_note = f"SofaScore first card ({len(sofa_fc)})"

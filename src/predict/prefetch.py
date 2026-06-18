@@ -9,17 +9,12 @@ from dataclasses import dataclass
 from odds.api_client import fetch_odds
 from odds.api_normalize import event_to_match_data, find_event
 from odds.event_odds_bundle import fetch_combined_event_player_odds
-from odds.match_loader import MatchOdds
-from odds.merge_providers import merge_match_data, merge_match_data_fill_gaps
+from odds.merge_providers import merge_match_data, merge_match_data_fill_gaps, needs_correct_score
 from odds.oddspapi_bundle import OddsPapiBundle, fetch_oddspapi_bundle
 from odds.oddspapi_client import oddspapi_configured
 from odds.sofascore_bundle import SofaScoreBundle, fetch_sofascore_bundle
 from players.models import MatchRoster
 from predict.timing import timed
-
-
-def _needs_correct_score(odds: MatchOdds) -> bool:
-    return not odds.correct_score or not odds.half_time_correct_score
 
 
 def _merge_first_card(
@@ -67,7 +62,7 @@ def _fetch_sofa_lite(
     if sofa_id is None:
         return None
 
-    need_cs = _needs_correct_score(match.odds)
+    need_cs = needs_correct_score(match.odds)
     op_goals = bool(oddspapi_bundle and oddspapi_bundle.goal_probs)
     op_cards = bool(oddspapi_bundle and oddspapi_bundle.card_probs)
     need_fc = not bool(oddspapi_bundle and oddspapi_bundle.first_card_probs)

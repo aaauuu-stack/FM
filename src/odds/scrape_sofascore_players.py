@@ -6,7 +6,7 @@ import statistics
 from typing import Any
 
 from odds.devig import proportional_devig
-from odds.scrape_sofascore import _choice_decimal
+from odds.scrape_sofascore import _choice_decimal, _market_name
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
 
@@ -23,10 +23,13 @@ _CARD_HINTS = (
     "booking",
     "carded",
 )
-
-
-def _market_name(market: dict[str, Any]) -> str:
-    return str(market.get("marketName") or market.get("name") or "").lower()
+_FIRST_CARD_MARKET_HINTS = (
+    "first player booked",
+    "first player carded",
+    "first to be carded",
+    "1st player booked",
+    "first booking",
+)
 
 
 def extract_goalscorer_from_sofa_markets(markets: list[dict[str, Any]]) -> dict[str, float]:
@@ -71,6 +74,26 @@ def extract_card_probs_from_sofa_markets(markets: list[dict[str, Any]]) -> dict[
     if not prices:
         return {}
     medians = {name: float(statistics.median(vals)) for name, vals in prices.items()}
+    return proportional_devig(medians)
+
+
+def extract_first_card_from_sofa_markets(markets: list[dict[str, Any]]) -> dict[str, float]:
+    prices: dict[str, list[float]] = {}
+    for market in markets:
+        name = _market_name(market)
+        if not any(h in name for h in _FIRST_CARD_MARKET_HINTS):
+            continue
+        for choice in market.get("choices", []):
+            label = str(choice.get("name") or choice.get("label") or "").strip()
+            if not label or label.lower() in {"yes", "no"}:
+                continue
+            decimal = _choice_decimal(choice)
+            if decimal is None:
+                continue
+            prices.setdefault(label, []).append(decimal)
+    if not prices:
+        return {}
+    medians = {n: float(statistics.median(v)) for n, v in prices.items()}
     return proportional_devig(medians)
 
 

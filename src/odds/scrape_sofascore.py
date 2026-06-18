@@ -82,17 +82,6 @@ def _extract_ht_markets(markets: list[dict[str, Any]]) -> dict[str, float]:
     return {key: float(statistics.median(vals)) for key, vals in prices.items()}
 
 
-def _sofascore_event_id(
-    home_query: str,
-    away_query: str,
-    kickoff_iso: str | None,
-) -> int | None:
-    """OddsPapi sofascoreId only (no calendario SofaScore)."""
-    from odds.sofascore_bundle import sofascore_event_id_from_oddspapi
-
-    return sofascore_event_id_from_oddspapi(home_query, away_query, kickoff_iso)
-
-
 def fetch_sofascore_match_odds(
     home_query: str,
     away_query: str,

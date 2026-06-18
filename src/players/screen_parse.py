@@ -6,7 +6,6 @@ import io
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 
 from odds.api_normalize import TEAM_ALIASES, normalize_team
 from players.models import MatchRoster, PlayerBonus
@@ -34,13 +33,6 @@ _BANNER_MIN_SCORE = 900.0
 def _default_match_id(home: str, away: str) -> str:
     return f"{home[:3].upper()}-{away[:3].upper()}"
 
-
-ROLE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\b(?:POR|PORT(?:IERE)?|GK)\b", re.I), "GK"),
-    (re.compile(r"\b(?:DIF|DIFENS(?:ORE)?|DEF)\b", re.I), "DEF"),
-    (re.compile(r"\b(?:CEN|CENTRO(?:CAMPISTA)?|MID)\b", re.I), "MID"),
-    (re.compile(r"\b(?:ATT|ATTACC(?:ANTE)?|FWD|A\/C)\b", re.I), "FWD"),
-]
 
 # FM app section headers (Italian)
 SECTION_ROLE: list[tuple[re.Pattern[str], str]] = [
@@ -351,13 +343,6 @@ def ocr_images(images: list[bytes]) -> str:
     return "\n\n".join(ordered)
 
 
-def _detect_role(fragment: str) -> str | None:
-    for pattern, role in ROLE_PATTERNS:
-        if pattern.search(fragment):
-            return role
-    return None
-
-
 def _find_team_in_text(fragment: str) -> str | None:
     lower = fragment.lower()
     for token, display in _known_team_tokens():
@@ -645,24 +630,3 @@ def roster_from_screenshots(images: list[bytes]) -> MatchRoster:
     if not text.strip():
         raise ValueError("OCR vuoto — screenshot illeggibili o troppo sfocati")
     return roster_from_ocr_text(text)
-
-
-@dataclass
-class ParsePreview:
-    home: str
-    away: str
-    player_count: int
-    vice_name: str | None
-    ocr_excerpt: str
-
-
-def preview_parse(text: str, *, excerpt_len: int = 400) -> ParsePreview:
-    roster = roster_from_ocr_text(text)
-    vice = roster.vice_player()
-    return ParsePreview(
-        home=roster.home,
-        away=roster.away,
-        player_count=len(roster.players),
-        vice_name=vice.name if vice else None,
-        ocr_excerpt=text[:excerpt_len].replace("\n", " | "),
-    )

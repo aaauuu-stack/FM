@@ -68,35 +68,3 @@ def recommend_first_card(
         ev=p * PAYOFF_FIRST_CARD,
         source_note=note,
     )
-
-
-def rank_event_alternatives(
-    roster: MatchRoster,
-    match,
-    event_code: str,
-    top_n: int = 3,
-) -> list[EventRecommendation]:
-    if event_code == "K":
-        probs, label = estimate_first_sub_probs(roster, match)
-        payoff = PAYOFF_FIRST_SUB
-        event_label = "Primo sostituito"
-    elif event_code == "L":
-        probs, label = estimate_first_card_probs(roster, match)
-        payoff = PAYOFF_FIRST_CARD
-        event_label = "Primo ammonito"
-    else:
-        return []
-
-    ranked = sorted(probs.items(), key=lambda item: item[1], reverse=True)
-    return [
-        EventRecommendation(
-            event_code=event_code,
-            event_label=event_label,
-            player_name=name,
-            probability=p,
-            payoff_pts=payoff,
-            ev=p * payoff,
-            source_note=label,
-        )
-        for name, p in ranked[:top_n]
-    ]

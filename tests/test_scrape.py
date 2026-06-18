@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from odds.match_loader import MatchOdds
-from odds.merge_providers import merge_odds_fill_gaps
+from odds.merge_providers import merge_odds_fill_gaps, needs_correct_score
 from odds.score_parsing import parse_score_outcome
 from odds.scrape_normalize import fetch_scraped_match_odds
 from odds.scrape_sofascore import _extract_ft_markets, _extract_ht_markets
@@ -47,6 +47,13 @@ def test_merge_odds_fill_gaps():
     assert merged.h2h["home"] == 1.6
     assert merged.correct_score["1-0"] == 7.0
     assert merged.half_time_correct_score["0-0"] == 6.0
+
+
+def test_needs_correct_score():
+    assert needs_correct_score(MatchOdds(h2h={"home": 1.5}))
+    assert not needs_correct_score(
+        MatchOdds(correct_score={"1-0": 7.0}, half_time_correct_score={"0-0": 6.0})
+    )
 
 
 def test_fetch_scraped_match_odds_mock():

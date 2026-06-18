@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 
 from odds.api_normalize import teams_match
 from odds.scrape_client import fetch_json
-from odds.scrape_sofascore import _sofascore_event_id, _sofascore_headers
+from odds.sofascore_bundle import sofascore_event_id_from_oddspapi
+from odds.scrape_sofascore import _sofascore_headers
 from players.name_match import players_match
 
 DEFAULT_HISTORY_MATCHES = 10
@@ -56,7 +57,7 @@ def resolve_team_id(
     opponent: str | None = None,
 ) -> int | None:
     if opponent:
-        event_id = _sofascore_event_id(team_query, opponent, kickoff_iso)
+        event_id = sofascore_event_id_from_oddspapi(team_query, opponent, kickoff_iso)
         if event_id:
             url = f"https://api.sofascore.com/api/v1/event/{event_id}"
             try:

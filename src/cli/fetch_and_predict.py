@@ -7,18 +7,13 @@ import sys
 
 from odds.api_client import fetch_odds, get_api_key, load_env_file
 from odds.api_normalize import event_to_match_data, find_event, list_events
-from odds.match_loader import MatchOdds
-from odds.merge_providers import merge_match_data, merge_match_data_fill_gaps
+from odds.merge_providers import merge_match_data, merge_match_data_fill_gaps, needs_correct_score
 from odds.oddspapi_client import oddspapi_configured
 from odds.oddspapi_normalize import fetch_oddspapi_match_odds
 from odds.sofascore_bundle import sofascore_event_id_from_oddspapi
 from odds.scrape_normalize import fetch_scraped_match_odds
 from predict.ev_report import print_ev_report, result_recommendation_to_report
 from predict.result_ev import rank_predictions
-
-
-def _needs_correct_score(odds: MatchOdds) -> bool:
-    return not odds.correct_score or not odds.half_time_correct_score
 
 
 def _build_match_from_apis(
@@ -31,10 +26,13 @@ def _build_match_from_apis(
     use_oddspapi: bool,
     use_scrape: bool,
     kickoff_iso: str | None = None,
+    fetch_result=None,
+    event=None,
 ):
     """Fetch and merge The Odds API + OddsPapi + web scrape for one fixture."""
-    fetch_result = fetch_odds(sport=sport, region=region, force_refresh=refresh)
-    event = find_event(fetch_result.events, home, away)
+    if fetch_result is None or event is None:
+        fetch_result = fetch_odds(sport=sport, region=region, force_refresh=refresh)
+        event = find_event(fetch_result.events, home, away)
     match = event_to_match_data(event)
     kickoff = kickoff_iso or str(event.get("commence_time", ""))
 
@@ -55,7 +53,7 @@ def _build_match_from_apis(
             file=sys.stderr,
         )
 
-    if use_scrape and _needs_correct_score(match.odds) and sofa_event_id:
+    if use_scrape and needs_correct_score(match.odds) and sofa_event_id:
         try:
             scrape_overlay, scrape_sources = fetch_scraped_match_odds(
                 home,
@@ -132,10 +130,12 @@ def run_match(
         away,
         sport=sport,
         region=region,
-        refresh=False,
+        refresh=refresh,
         use_oddspapi=use_oddspapi,
         use_scrape=use_scrape,
         kickoff_iso=str(event.get("commence_time", "")),
+        fetch_result=fetch_result,
+        event=event,
     )
     print_match_recommendation(match, source_note=source_note, top_n=top_n)
     if remaining:

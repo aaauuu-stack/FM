@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 from odds.match_loader import MatchOdds
+from odds.merge_providers import needs_correct_score
 from odds.scrape_sofascore import fetch_sofascore_match_odds
-
-
-def _needs_scrape(existing: MatchOdds) -> bool:
-    return not existing.correct_score or not existing.half_time_correct_score
 
 
 def fetch_scraped_match_odds(
@@ -23,7 +20,7 @@ def fetch_scraped_match_odds(
 
     Returns (overlay MatchOdds, list of source labels used).
     """
-    if not _needs_scrape(existing):
+    if not needs_correct_score(existing):
         return MatchOdds(), []
 
     overlay = MatchOdds()

@@ -103,32 +103,3 @@ def fetch_json(
     _write_cache(cache_file, data)
     mem_set(mem_key, data)
     return ScrapeFetchResult(data=data, from_cache=False)
-
-
-def fetch_text(
-    url: str,
-    *,
-    cache_name: str,
-    ttl: int = DEFAULT_CACHE_TTL,
-    extra_headers: dict[str, str] | None = None,
-) -> ScrapeFetchResult:
-    cache_file = _cache_dir() / cache_name
-    mem_key = str(cache_file.resolve())
-    cached = mem_get(mem_key, ttl)
-    if cached is None:
-        cached = _read_cache(cache_file, ttl)
-        if cached is not None:
-            mem_set(mem_key, cached)
-    if cached is not None:
-        return ScrapeFetchResult(data=cached, from_cache=True)
-
-    headers = {**BROWSER_HEADERS, **(extra_headers or {})}
-    try:
-        raw = _fetch_live(url, headers)
-    except Exception as exc:
-        raise RuntimeError(f"Scrape request failed on {url}: {exc}") from exc
-
-    text = raw.decode("utf-8", errors="replace")
-    _write_cache(cache_file, text)
-    mem_set(mem_key, text)
-    return ScrapeFetchResult(data=text, from_cache=False)

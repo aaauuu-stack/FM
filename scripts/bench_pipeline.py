@@ -61,7 +61,6 @@ def _empty_sofa_bundle() -> SofaScoreBundle:
     return SofaScoreBundle(
         goal_probs={},
         card_probs={},
-        stats={},
         props_note="mock: sofa skip",
     )
 

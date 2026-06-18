@@ -64,3 +64,8 @@ def merge_match_data(base: MatchData, overlay: MatchOdds) -> MatchData:
         kickoff=base.kickoff,
         odds=merge_odds(base.odds, overlay),
     )
+
+
+def needs_correct_score(odds: MatchOdds) -> bool:
+    """True if FT or HT correct-score markets are still missing."""
+    return not odds.correct_score or not odds.half_time_correct_score

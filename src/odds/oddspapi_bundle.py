@@ -27,15 +27,7 @@ class OddsPapiBundle:
     sofascore_event_id: int | None = None
 
 
-def _sofascore_id_from_fixture(fixture: dict) -> int | None:
-    try:
-        raw = (fixture.get("externalProviders") or {}).get("sofascoreId")
-        return int(raw) if raw else None
-    except (TypeError, ValueError):
-        return None
-
-
-def fetch_oddspapi_bundle(
+from odds.sofascore_bundle import sofascore_id_from_fixture
     home_query: str,
     away_query: str,
     kickoff_iso: str | None = None,
@@ -60,7 +52,7 @@ def fetch_oddspapi_bundle(
     except (ValueError, RuntimeError):
         return bundle
 
-    bundle.sofascore_event_id = _sofascore_id_from_fixture(fixture)
+    bundle.sofascore_event_id = sofascore_id_from_fixture(fixture)
     payload = fetch_odds(str(fixture["fixtureId"]))
 
     if need_match_cs:

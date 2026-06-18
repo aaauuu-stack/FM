@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import math
-import statistics
 from dataclasses import dataclass
 
-from odds.devig import proportional_devig
 from odds.distribution import build_distribution
 from odds.goalscorer import estimate_team_expected_goals
 from odds.oddspapi_client import fetch_markets_catalog, fetch_odds, oddspapi_configured
 from odds.oddspapi_normalize import lookup_oddspapi_fixture
 from odds.oddspapi_player_props import extract_player_yes_probs
-from odds.scrape_sofascore_players import _choice_decimal
 from odds.scrape_sofascore_subs import TeamSubProfile, fetch_team_sub_profile
 from players.models import MatchRoster, PlayerBonus
 from players.name_match import players_match
@@ -20,14 +17,6 @@ from players.team_data import card_prob_from_per90, default_minutes_for_role, ge
 
 _P_MATCH_CARD = 0.88
 _P_MATCH_SUB = 0.98  # almost always at least one sub
-
-_FIRST_CARD_MARKET_HINTS = (
-    "first player booked",
-    "first player carded",
-    "first to be carded",
-    "1st player booked",
-    "first booking",
-)
 
 # Fallback role prior if no history
 _ROLE_SUB_PRIOR = {"FWD": 0.22, "MID": 0.16, "DEF": 0.08, "GK": 0.0}
@@ -172,26 +161,6 @@ def _discover_first_card_market_id(catalog: list) -> int | None:
         if "first" in mtype and "card" in mtype:
             return int(market["marketId"])
     return None
-
-
-def _extract_first_card_sofa_markets(markets: list) -> dict[str, float]:
-    prices: dict[str, list[float]] = {}
-    for market in markets:
-        name = str(market.get("marketName") or market.get("name") or "").lower()
-        if not any(h in name for h in _FIRST_CARD_MARKET_HINTS):
-            continue
-        for choice in market.get("choices", []):
-            label = str(choice.get("name") or choice.get("label") or "").strip()
-            if not label or label.lower() in {"yes", "no"}:
-                continue
-            decimal = _choice_decimal(choice)
-            if decimal is None:
-                continue
-            prices.setdefault(label, []).append(decimal)
-    if not prices:
-        return {}
-    medians = {n: float(statistics.median(v)) for n, v in prices.items()}
-    return proportional_devig(medians)
 
 
 def fetch_first_card_bookmaker_probs(

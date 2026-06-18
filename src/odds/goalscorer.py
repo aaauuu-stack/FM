@@ -6,7 +6,7 @@ import math
 import statistics
 from typing import Any
 
-from odds.api_client import fetch_event_odds, fetch_odds
+from odds.api_client import fetch_odds
 from odds.api_normalize import find_event
 from odds.devig import proportional_devig
 from odds.oddspapi_player_props import attach_oddspapi_player_props
@@ -34,28 +34,6 @@ def _collect_goalscorer_prices(event: dict[str, Any]) -> dict[str, list[float]]:
                 if name and price > 1.0:
                     prices.setdefault(name, []).append(price)
     return prices
-
-
-def fetch_goalscorer_probabilities_from_event(
-    event_id: str,
-    *,
-    sport: str,
-    region: str,
-    force_refresh: bool = False,
-) -> dict[str, float]:
-    """Return player name -> de-vigged P(anytime goalscorer) for one event."""
-    result = fetch_event_odds(
-        event_id,
-        sport=sport,
-        region=region,
-        markets=GOALSCORER_MARKET,
-        force_refresh=force_refresh,
-    )
-    raw_prices = _collect_goalscorer_prices(result.event)
-    if not raw_prices:
-        return {}
-    medians = {name: float(statistics.median(vals)) for name, vals in raw_prices.items()}
-    return proportional_devig(medians)
 
 
 def apply_goalscorer_probs(
@@ -124,22 +102,7 @@ def attach_goalscorer_odds(
     except (RuntimeError, ValueError) as exc:
         return roster, f"goalscorer non disponibile: {exc}"
 
-    if not probs:
-        return roster, "goalscorer: mercato vuoto per questa partita"
-
-    updated: list[PlayerBonus] = []
-    matched = 0
-    for player in roster.players:
-        p_goal = 0.0
-        for api_name, prob in probs.items():
-            if players_match(player.name, api_name):
-                p_goal = prob
-                matched += 1
-                break
-        updated.append(player.with_probs(p_goal=p_goal))
-
-    roster.players = updated
-    return roster, f"goalscorer API ({matched}/{len(roster.players)} matched)"
+    return apply_goalscorer_probs(roster, probs)
 
 
 def estimate_team_expected_goals(match) -> tuple[float, float]:
