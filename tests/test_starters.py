@@ -167,8 +167,8 @@ def test_sofa_complete_lineup_excludes_backup_gk():
     assert "SofaScore formazioni" in note
 
 
-def test_bench_sub_with_book_goal_stays_in_pool():
-    """Sub quotato dal book: P(gol) resta, entra nel pool formazione."""
+def test_bench_sub_with_book_goal_zeroed_if_not_starter():
+    """Panchina con quota book: P(gol) azzerata — FM non premia chi non scende."""
     from players.starters import apply_starter_probabilities
 
     players = [
@@ -193,10 +193,10 @@ def test_bench_sub_with_book_goal_stays_in_pool():
     roster = apply_starter_probabilities(roster)
 
     amdouni = next(p for p in roster.players if p.name == "Amdouni")
-    assert float(amdouni.p_goal or 0) == 0.37
-    pool_names = {p.name for p in roster.lineup_pool()}
-    assert "Amdouni" in pool_names
-    assert "Embolo" in pool_names
+    assert float(amdouni.p_goal or 0) == 0.0
+    assert amdouni.book_goal_matched
+    assert "Amdouni" not in {p.name for p in roster.lineup_pool()}
+    assert "Embolo" in {p.name for p in roster.lineup_pool()}
 
 
 def test_bench_without_book_zeroed():

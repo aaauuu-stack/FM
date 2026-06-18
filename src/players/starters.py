@@ -161,32 +161,14 @@ def infer_starters(
 
 def apply_starter_probabilities(roster: MatchRoster) -> MatchRoster:
     """
-    Zero event probabilities for non-starters without book quotes.
+    Zero event probabilities for non-starters.
 
-    Bookmaker P(gol)/P(cartellino) embeds expected minutes for outfielders only.
-    Portieri: solo il titolare conserva probabilità (CS da quote partita).
+    Book quotes are applied before this step but FM awards no points to bench
+    players who never enter the pitch — titolarità (SofaScore) gates effective P.
     """
     updated: list[PlayerBonus] = []
     for player in roster.players:
-        if player.is_goalkeeper:
-            if player.starter:
-                updated.append(player)
-            else:
-                updated.append(
-                    player.with_probs(
-                        p_goal=0.0,
-                        p_gk_goal=0.0,
-                        p_penalty_scored=0.0,
-                        p_penalty_missed=0.0,
-                        p_penalty_saved=0.0,
-                        p_yellow=0.0,
-                        p_red=0.0,
-                        p_own_goal=0.0,
-                        p_clean_sheet=0.0,
-                    )
-                )
-            continue
-        if player.starter or player.book_quote_trusts_minutes:
+        if player.starter:
             updated.append(player)
             continue
         updated.append(
