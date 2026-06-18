@@ -96,6 +96,45 @@ def test_gk_fallback_skips_quoted_backup():
     assert "portiere home: Kobel" in note
 
 
+def test_oddspapi_goal_market_marks_keller_picks_kobel():
+    """Keller quotato anytime gol (OddsPapi) → Kobel titolare, non Keller."""
+    from players.starters import infer_starters, mark_gk_goalscorer_quotes
+
+    roster = _swiss_bosnia_roster()
+    roster = mark_gk_goalscorer_quotes(roster, {"Keller": 0.02, "Embolo": 0.48})
+    roster, note = infer_starters(roster)
+    kobel = next(p for p in roster.players if p.name == "Kobel")
+    keller = next(p for p in roster.players if p.name == "Keller")
+    assert kobel.starter
+    assert not keller.starter
+    assert keller.book_goal_matched
+
+
+def test_resolve_goalkeepers_after_wrong_starter():
+    """Second pass GK dopo attach quote: Keller starter → corretto a Kobel."""
+    from dataclasses import replace
+
+    from players.starters import resolve_goalkeepers
+
+    roster = _swiss_bosnia_roster()
+    players = []
+    for p in roster.players:
+        row = p
+        if p.name == "Keller":
+            row = replace(p, starter=True, book_goal_matched=True, p_goal=0.02)
+        elif p.name == "Kobel":
+            row = replace(p, starter=False)
+        players.append(row)
+    roster.players = players
+    raw = {(p.side, p.name): (p.bonus_goal, p.bonus_clean_sheet) for p in roster.players if p.is_goalkeeper}
+    roster, note = resolve_goalkeepers(roster, raw_gk_bonuses=raw)
+    kobel = next(p for p in roster.players if p.name == "Kobel")
+    keller = next(p for p in roster.players if p.name == "Keller")
+    assert kobel.starter
+    assert not keller.starter
+    assert "non Keller" in note
+
+
 def test_mark_gk_goalscorer_quotes_before_infer():
     from players.starters import infer_starters, mark_gk_goalscorer_quotes
 

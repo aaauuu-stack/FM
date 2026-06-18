@@ -19,7 +19,11 @@ def _matches_any(fm_name: str, api_names: set[str]) -> bool:
     return any(players_match(fm_name, name) for name in api_names)
 
 
-def _pick_one_gk(gks: list[PlayerBonus]) -> PlayerBonus | None:
+def _pick_one_gk(
+    gks: list[PlayerBonus],
+    *,
+    raw_bonuses: dict[tuple[str, str], tuple[int, int]] | None = None,
+) -> PlayerBonus | None:
     """
     Choose the likely starting GK from the full squad list.
 
@@ -28,14 +32,32 @@ def _pick_one_gk(gks: list[PlayerBonus]) -> PlayerBonus | None:
     """
     if not gks:
         return None
+
+    def bonus_pair(p: PlayerBonus) -> tuple[int, int]:
+        if raw_bonuses:
+            return raw_bonuses.get((p.side, p.name), (p.bonus_goal, p.bonus_clean_sheet))
+        return p.bonus_goal, p.bonus_clean_sheet
+
+    pool = list(gks)
+    unquoted = [p for p in pool if not p.book_goal_matched]
+    if unquoted:
+        pool = unquoted
+    min_goal = min(bonus_pair(p)[0] for p in pool)
+    pool = [p for p in pool if bonus_pair(p)[0] == min_goal]
+    min_cs = min(bonus_pair(p)[1] for p in pool)
+    pool = [p for p in pool if bonus_pair(p)[1] == min_cs]
+    if len(pool) == 1:
+        return pool[0]
+    if len(pool) == 2:
+        # Ultimo fallback: evita ordine alfabetico che favoriva Keller < Kobel.
+        return max(pool, key=lambda p: p.name.lower())
     return min(
-        gks,
+        pool,
         key=lambda p: (
-            p.bonus_goal,
-            p.bonus_clean_sheet,
+            bonus_pair(p)[0],
+            bonus_pair(p)[1],
             int(p.book_goal_matched),
             int(p.book_card_matched),
-            p.name.lower(),
         ),
     )
 
@@ -43,6 +65,8 @@ def _pick_one_gk(gks: list[PlayerBonus]) -> PlayerBonus | None:
 def _pick_gk_for_side(
     gks: list[PlayerBonus],
     sofa_gk_names: set[str],
+    *,
+    raw_bonuses: dict[tuple[str, str], tuple[int, int]] | None = None,
 ) -> PlayerBonus | None:
     """Prefer SofaScore GK when exactly one roster keeper matches."""
     if not gks:
@@ -51,27 +75,31 @@ def _pick_gk_for_side(
         matched = [p for p in gks if _matches_any(p.name, sofa_gk_names)]
         if len(matched) == 1:
             return matched[0]
-    return _pick_one_gk(gks)
+    return _pick_one_gk(gks, raw_bonuses=raw_bonuses)
 
 
 def mark_gk_goalscorer_quotes(
     roster: MatchRoster,
-    probs: dict[str, float] | None,
+    *prob_sources: dict[str, float] | None,
 ) -> MatchRoster:
     """
-    Mark GK names found in the anytime goalscorer market before titolarità pick.
+    Mark GK names found in anytime goalscorer markets (all book sources).
 
     Books quote backup keepers more often than the #1; used only as a tie-breaker
-    after FM bonus, not to assign P(gol) yet.
+    after FM bonus, not to assign P(gol) yet. Scans every GK on the roster.
     """
-    if not probs:
+    merged: dict[str, float] = {}
+    for src in prob_sources:
+        if src:
+            merged.update(src)
+    if not merged:
         return roster
     updated: list[PlayerBonus] = []
     for player in roster.players:
         if not player.is_goalkeeper:
             updated.append(player)
             continue
-        quoted = any(players_match(player.name, api_name) for api_name in probs)
+        quoted = any(players_match(player.name, api_name) for api_name in merged)
         if quoted:
             updated.append(replace(player, book_goal_matched=True))
         else:
@@ -85,6 +113,7 @@ def _consolidate_gk_starters(
     *,
     sofa_gk_home: set[str] | None = None,
     sofa_gk_away: set[str] | None = None,
+    raw_gk_bonuses: dict[tuple[str, str], tuple[int, int]] | None = None,
 ) -> list[str]:
     """
     Exactly one starting GK per side.
@@ -102,7 +131,9 @@ def _consolidate_gk_starters(
         if not gks:
             continue
         wrong = [p.name for p in gks if p.starter]
-        pick = _pick_gk_for_side(gks, sofa_by_side[side])
+        pick = _pick_gk_for_side(
+            gks, sofa_by_side[side], raw_bonuses=raw_gk_bonuses
+        )
         if not pick:
             continue
         for i, player in enumerate(players):
@@ -167,7 +198,27 @@ def infer_starters(
     3. Heuristic XI by role + FM bonus — only if both above fail for that side
     Vice allenatore is always treated as starter.
     """
+    updated, note, _, _, _ = infer_starters_impl(
+        roster, sofascore_event_id=sofascore_event_id
+    )
+    return updated, note
+
+
+def infer_starters_impl(
+    roster: MatchRoster,
+    *,
+    sofascore_event_id: int | None = None,
+) -> tuple[MatchRoster, str, set[str], set[str], dict[tuple[str, str], tuple[int, int]]]:
+    """
+    Like infer_starters but also returns SofaScore GK names and raw OCR bonuses
+    for a second GK pass after book quotes are merged.
+    """
     players = harmonize_goalkeeper_bonuses([replace(p, starter=False) for p in roster.players])
+    raw_gk_bonuses = {
+        (p.side, p.name): (p.bonus_goal, p.bonus_clean_sheet)
+        for p in roster.players
+        if p.is_goalkeeper
+    }
     notes: list[str] = []
     min_xi = min_sofa_xi_per_side()
 
@@ -238,6 +289,7 @@ def infer_starters(
             players,
             sofa_gk_home=sofa_gk_home,
             sofa_gk_away=sofa_gk_away,
+            raw_gk_bonuses=raw_gk_bonuses,
         )
     )
 
@@ -250,7 +302,34 @@ def infer_starters(
             players=players,
         ),
         "; ".join(notes),
+        sofa_gk_home,
+        sofa_gk_away,
+        raw_gk_bonuses,
     )
+
+
+def resolve_goalkeepers(
+    roster: MatchRoster,
+    *,
+    sofa_gk_home: set[str] | None = None,
+    sofa_gk_away: set[str] | None = None,
+    raw_gk_bonuses: dict[tuple[str, str], tuple[int, int]] | None = None,
+) -> tuple[MatchRoster, str]:
+    """
+    Re-pick one GK per side after book quotes are attached.
+
+    Backup keepers (Keller) often get book anytime-gol only once quotes merge;
+    this must run after attach_all_player_probs and before clean sheet EV.
+    """
+    players = list(roster.players)
+    notes = _consolidate_gk_starters(
+        players,
+        sofa_gk_home=sofa_gk_home,
+        sofa_gk_away=sofa_gk_away,
+        raw_gk_bonuses=raw_gk_bonuses,
+    )
+    roster.players = players
+    return roster, "; ".join(notes)
 
 
 def apply_starter_probabilities(roster: MatchRoster) -> MatchRoster:

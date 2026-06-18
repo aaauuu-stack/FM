@@ -8,7 +8,12 @@ from odds.goalscorer import attach_all_player_probs, attach_clean_sheet_probs
 from odds.scrape_sofascore_subs import TeamSubProfile
 from players.models import MatchRoster
 from players.roster_loader import load_roster
-from players.starters import apply_starter_probabilities, infer_starters, mark_gk_goalscorer_quotes
+from players.starters import (
+    apply_starter_probabilities,
+    infer_starters_impl,
+    mark_gk_goalscorer_quotes,
+    resolve_goalkeepers,
+)
 from predict.event_ev import recommend_first_card, recommend_first_sub
 from predict.prefetch import build_match_parallel
 from predict.ev_report import (
@@ -74,8 +79,14 @@ def _analyze_with_roster(
             top_n=top_n,
         )
 
-    roster = mark_gk_goalscorer_quotes(roster, prefetch.goalscorer_probs)
-    roster, starter_note = infer_starters(
+    goal_markets: list[dict[str, float] | None] = [prefetch.goalscorer_probs]
+    if prefetch.oddspapi_props:
+        goal_markets.append(prefetch.oddspapi_props[0])
+    if prefetch.sofa_props:
+        goal_markets.append(prefetch.sofa_props[0])
+
+    roster = mark_gk_goalscorer_quotes(roster, *goal_markets)
+    roster, starter_note, sofa_gk_home, sofa_gk_away, raw_gk_bonuses = infer_starters_impl(
         roster,
         sofascore_event_id=prefetch.sofascore_event_id,
     )
@@ -94,6 +105,15 @@ def _analyze_with_roster(
         starters_only=True,
         starters_only_poisson=True,
     )
+    roster = mark_gk_goalscorer_quotes(roster, *goal_markets)
+    roster, gk_note = resolve_goalkeepers(
+        roster,
+        sofa_gk_home=sofa_gk_home,
+        sofa_gk_away=sofa_gk_away,
+        raw_gk_bonuses=raw_gk_bonuses,
+    )
+    if gk_note:
+        starter_note = f"{starter_note}; {gk_note}" if starter_note else gk_note
     roster = attach_clean_sheet_probs(roster, match)
     roster = apply_starter_probabilities(roster)
 
