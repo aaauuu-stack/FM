@@ -83,6 +83,17 @@ TEAM_DISPLAY: dict[str, str] = {
     "belgium": "Belgio",
     "argentina": "Argentina",
     "uruguay": "Uruguay",
+    "switzerland": "Svizzera",
+    "bosnia herzegovina": "Bosnia-Erzegovina",
+    "norway": "Norvegia",
+    "sweden": "Svezia",
+    "south africa": "Sud Africa",
+    "ivory coast": "Costa d'Avorio",
+    "cape verde": "Capo Verde",
+    "dr congo": "RD Congo",
+    "jordan": "Giordania",
+    "new zealand": "Nuova Zelanda",
+    "scotland": "Scozia",
 }
 
 

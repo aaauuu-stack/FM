@@ -6,7 +6,12 @@ import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from odds.api_normalize import teams_match
+from odds.api_normalize import (
+    MIN_TEAM_MATCH_SCORE,
+    _fixture_pair_score,
+    team_match_score,
+    teams_match,
+)
 from odds.match_loader import MatchOdds
 from odds.oddspapi_client import (
     SOCCER_SPORT_ID,
@@ -92,19 +97,38 @@ def _find_fixture(fixtures: list[dict[str, Any]], home_query: str, away_query: s
     ]
     search_pool = world_cup or fixtures
 
+    if not search_pool:
+        raise ValueError(
+            f"Fixture OddsPapi non trovato: {home_query} vs {away_query}. Disponibili: (nessuno)"
+        )
+
+    ranked: list[tuple[float, dict[str, Any]]] = []
     for fixture in search_pool:
         home = str(fixture.get("participant1Name", ""))
         away = str(fixture.get("participant2Name", ""))
-        if teams_match(home_query, home) and teams_match(away_query, away):
-            return fixture
+        score = _fixture_pair_score(home_query, away_query, home, away)
+        ranked.append((score, fixture))
 
-    sample = [
-        f"{f.get('participant1Name')} vs {f.get('participant2Name')}" for f in fixtures[:8]
-    ]
-    raise ValueError(
-        f"Fixture OddsPapi non trovato: {home_query} vs {away_query}. "
-        f"Disponibili (campione): {', '.join(sample) if sample else '(nessuno)'}"
-    )
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    best_score, best = ranked[0]
+    second_score = ranked[1][0] if len(ranked) > 1 else 0.0
+
+    if best_score < MIN_TEAM_MATCH_SCORE:
+        sample = [
+            f"{f.get('participant1Name')} vs {f.get('participant2Name')}" for f in fixtures[:8]
+        ]
+        raise ValueError(
+            f"Fixture OddsPapi non trovato: {home_query} vs {away_query} "
+            f"(score {best_score:.2f}). Disponibili (campione): {', '.join(sample)}"
+        )
+
+    if second_score >= MIN_TEAM_MATCH_SCORE and (best_score - second_score) < 0.04:
+        raise ValueError(
+            f"Fixture OddsPapi ambiguo per {home_query} vs {away_query}. "
+            "Verifica i nomi squadra."
+        )
+
+    return best
 
 
 def lookup_oddspapi_fixture(

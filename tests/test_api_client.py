@@ -9,6 +9,7 @@ from odds.api_normalize import (
     event_to_match_data,
     find_event,
     normalize_team,
+    team_match_score,
     teams_match,
 )
 
@@ -24,7 +25,54 @@ def eng_cro_events():
 def test_teams_match_italian_aliases():
     assert teams_match("Inghilterra", "England")
     assert teams_match("Croazia", "Croatia")
+    assert teams_match("Svizzera", "Switzerland")
+    assert teams_match("Bosnia-Erzegovina", "Bosnia & Herzegovina")
+    assert teams_match("Bosnia Erzegovina", "Bosnia & Herzegovina")
     assert normalize_team("Inghilterra") == "england"
+    assert normalize_team("Bosnia-Erzegovina") == "bosnia herzegovina"
+
+
+def test_find_event_swiss_bosnia():
+    events = [
+        {
+            "id": "x1",
+            "home_team": "Switzerland",
+            "away_team": "Bosnia & Herzegovina",
+            "commence_time": "2026-06-20T18:00:00Z",
+            "bookmakers": [],
+        }
+    ]
+    event = find_event(events, "Svizzera", "Bosnia-Erzegovina")
+    assert event["home_team"] == "Switzerland"
+
+
+def test_team_match_rejects_usa_in_australia():
+    assert not teams_match("USA", "Australia")
+    assert team_match_score("USA", "Australia") < 0.72
+
+
+def test_find_event_swapped_roster_order():
+    events = [
+        {
+            "id": "x1",
+            "home_team": "Switzerland",
+            "away_team": "Bosnia & Herzegovina",
+            "commence_time": "2026-06-20T18:00:00Z",
+            "bookmakers": [],
+        }
+    ]
+    event = find_event(events, "Bosnia-Erzegovina", "Svizzera")
+    assert event["home_team"] == "Switzerland"
+
+
+def test_find_event_picks_best_from_list():
+    events = [
+        {"id": "a", "home_team": "Czech Republic", "away_team": "South Africa", "bookmakers": []},
+        {"id": "b", "home_team": "Switzerland", "away_team": "Bosnia & Herzegovina", "bookmakers": []},
+        {"id": "c", "home_team": "England", "away_team": "Croatia", "bookmakers": []},
+    ]
+    event = find_event(events, "Svizzera", "Bosnia Erzegovina")
+    assert event["id"] == "b"
 
 
 def test_event_to_match_data(eng_cro_events):
